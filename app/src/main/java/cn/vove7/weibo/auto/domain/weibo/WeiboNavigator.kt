@@ -1417,6 +1417,12 @@ class WeiboNavigator {
         }
         delay(1_500)
 
+        onProgress("选择「水帖」板块…")
+        if (!selectWaterPostSection()) {
+            dumpLayout("water_section_not_found")
+            error("找不到「水帖」板块，已取消发帖")
+        }
+
         onProgress("填写发帖内容…")
         val editor = findPostEditor()
             ?: run {
@@ -1438,7 +1444,10 @@ class WeiboNavigator {
         Timber.tag(TAG).i("performPost text setOk=$setOk")
 
         onProgress("关闭「同步到微博」…")
-        uncheckSyncToWeibo()
+        if (!ensureSyncToWeiboUnchecked()) {
+            dumpLayout("post_sync_checkbox_still_checked")
+            error("无法确认「同步到微博」已取消勾选，已取消发帖")
+        }
         delay(400)
 
         onProgress("点击发送…")
@@ -1450,6 +1459,51 @@ class WeiboNavigator {
         dismissDialogIfAny()
         onProgress("发帖完成")
         logPage("performPost done")
+    }
+
+    /**
+     * 发帖页的板块列表是横向 RecyclerView。为查看右侧板块，手指从右向左慢速滑动，
+     * 每次滑动后重新查找「水帖」并点击其可点击父容器。
+     */
+    private suspend fun selectWaterPostSection(): Boolean {
+        val deadline = System.currentTimeMillis() + 18_000
+        var swipeCount = 0
+        while (System.currentTimeMillis() < deadline) {
+            val target = dfsFindViewNodes { node ->
+                node.text?.toString()?.trim() == "水帖" ||
+                    runCatching { node.desc()?.trim() == "水帖" }.getOrDefault(false)
+            }.firstOrNull()
+                ?: findBySystemText("水帖").firstOrNull()
+            if (target != null) {
+                Timber.tag(TAG).i("selectWaterPostSection: found ${describeNode(target)}")
+                if (tryClickCommunityNode(target, "post_section_water")) {
+                    delay(500)
+                    return true
+                }
+            }
+
+            val sectionList = findBySystemViewId("com.sina.weibo:id/section_rv")
+                .ifEmpty { findBySystemViewId("section_rv") }
+                .firstOrNull()
+            if (sectionList == null) {
+                delay(300)
+                continue
+            }
+            val bounds = sectionList.bounds
+            val y = bounds.centerY()
+            // 每次仅移动一小段，避免越过目标板块。
+            val startX = (bounds.left + bounds.width() * 0.78f).toInt()
+            val endX = (bounds.left + bounds.width() * 0.60f).toInt()
+            Timber.tag(TAG).i(
+                "selectWaterPostSection: slow swipe#$swipeCount ($startX,$y)->($endX,$y)"
+            )
+            runCatching {
+                cn.vove7.auto.core.api.swipe(startX, y, endX, y, 700)
+            }.onFailure { Timber.tag(TAG).w(it, "selectWaterPostSection swipe failed") }
+            swipeCount++
+            delay(900)
+        }
+        return false
     }
 
     private fun findPostEditor(): ViewNode? {
@@ -1472,7 +1526,7 @@ class WeiboNavigator {
     }
 
     /**
-     * 关闭「同步到微博」。
+     * 强制确认「同步到微博」已取消勾选。
      * 读 com.sina.weibo:id/checkbox 的 isChecked：
      * - false → 已取消，绝不点击（避免又勾上）
      * - true  → 点一次；**重新查找节点**再读状态，仅当仍为 true 才再点
@@ -1480,44 +1534,36 @@ class WeiboNavigator {
      * 注意：点完后旧 ViewNode 的 isChecked 可能仍是缓存 true，
      * 不能复用旧节点判断，否则会误点第二次把勾又打开。
      */
-    private suspend fun uncheckSyncToWeibo() {
-        // 最多两轮：每轮都重新 find + 读 checked
-        repeat(2) { round ->
+    private suspend fun ensureSyncToWeiboUnchecked(): Boolean {
+        // 每轮都重新 find + 读 checked；只有读到 false 才允许继续发送。
+        repeat(3) { round ->
             val box = findPostSyncCheckBox()
             if (box == null) {
-                Timber.tag(TAG).w("uncheckSync: checkbox not found round=$round")
-                if (round == 0) {
-                    // 兜底：class CheckBox
-                    if (uncheckAnyCheckBoxOnce()) return
-                }
-                if (round == 1) dumpLayout("post_sync_checkbox_not_found")
-                return
+                Timber.tag(TAG).w("ensureSyncUnchecked: checkbox not found round=$round")
+                delay(400)
+                return@repeat
             }
             // refresh 节点再读
             runCatching { box.node.refresh() }
             val checked = runCatching { box.node.isChecked }.getOrNull()
             Timber.tag(TAG).i(
-                "uncheckSync: round=$round checked=$checked ${describeNode(box)}"
+                "ensureSyncUnchecked: round=$round checked=$checked ${describeNode(box)}"
             )
             when (checked) {
                 false -> {
-                    Timber.tag(TAG).i("uncheckSync: already false, ready to send")
-                    return
+                    Timber.tag(TAG).i("ensureSyncUnchecked: confirmed false, ready to send")
+                    return true
                 }
                 true -> {
                     // 只点 checkbox 自身，避免 tryClick 点到父容器
                     val clicked = clickCheckBoxDirect(box, "uncheck_r$round")
-                    Timber.tag(TAG).i("uncheckSync: click round=$round ok=$clicked")
-                    delay(500)
+                    Timber.tag(TAG).i("ensureSyncUnchecked: click round=$round ok=$clicked")
+                    delay(600)
                     // 下一轮循环会重新 find 再读
                 }
                 null -> {
-                    if (round == 0) {
-                        clickCheckBoxDirect(box, "uncheck_unknown")
-                        delay(500)
-                    } else {
-                        return
-                    }
+                    Timber.tag(TAG).w("ensureSyncUnchecked: checked state unavailable round=$round")
+                    delay(400)
                 }
             }
         }
@@ -1525,10 +1571,8 @@ class WeiboNavigator {
         val finalBox = findPostSyncCheckBox()
         runCatching { finalBox?.node?.refresh() }
         val finalChecked = runCatching { finalBox?.node?.isChecked }.getOrNull()
-        Timber.tag(TAG).i("uncheckSync: final checked=$finalChecked")
-        if (finalChecked == true) {
-            Timber.tag(TAG).w("uncheckSync: still checked after 2 clicks, stop (avoid toggle loop)")
-        }
+        Timber.tag(TAG).i("ensureSyncUnchecked: final checked=$finalChecked")
+        return finalChecked == false
     }
 
     /** 直接点 CheckBox，优先 click() 再 tryClick，避免误点父布局 */
