@@ -94,6 +94,7 @@ jobs:
           QINIU_BUCKET: files
           QINIU_UPLOAD_HOST: https://up-z1.qiniup.com
           QINIU_PART_SIZE: 1048576
+          QINIU_CONCURRENCY: 3
         run: |
           python3 scripts/qiniu_multipart_upload.py \
             --file app/build/outputs/apk/release/app-release.apk \
@@ -102,6 +103,7 @@ jobs:
             --upload-host "${QINIU_UPLOAD_HOST}" \
             --upload-token "${QINIU_APK_TOKEN}" \
             --part-size "${QINIU_PART_SIZE}" \
+            --concurrency "${QINIU_CONCURRENCY}" \
             --mime-type application/vnd.android.package-archive
           python3 scripts/qiniu_multipart_upload.py \
             --file version.json \
@@ -110,6 +112,7 @@ jobs:
             --upload-host "${QINIU_UPLOAD_HOST}" \
             --upload-token "${QINIU_MANIFEST_TOKEN}" \
             --part-size "${QINIU_PART_SIZE}" \
+            --concurrency "${QINIU_CONCURRENCY}" \
             --mime-type application/json
 
       - name: Refresh Qiniu CDN cache

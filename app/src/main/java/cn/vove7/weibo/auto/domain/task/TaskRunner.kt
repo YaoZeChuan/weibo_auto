@@ -96,8 +96,8 @@ class WeiboTaskRunner(
                     onProgress("$label：进入账号管理切号…")
                     navigator.goToAccountManage { p -> onProgress("$label：$p") }
                     navigator.switchToAccount(account.name)
-                    delay(2_000)
-                    runCatching { navigator.waitWeiboReady(15_000) }
+                    // switchToAccount 已等待切换结果；这里只保留较短的就绪兜底，避免无条件长暂停。
+                    runCatching { navigator.waitWeiboReady(5_000) }
 
                     // 浏览/发帖：先进入超话；未签到会在 openTargetSuperTopic 内自动签到
                     if (ordered.any { it == TaskType.BROWSE || it == TaskType.POST }) {

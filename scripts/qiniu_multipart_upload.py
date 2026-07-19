@@ -14,10 +14,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 MIN_PART_SIZE = 1 << 20
 DEFAULT_PART_SIZE = 4 << 20
+DEFAULT_CONCURRENCY = 3
 MAX_PARTS = 10_000
 
 
@@ -147,6 +149,62 @@ def infer_mime_type(file_path: Path, explicit_mime_type: str | None) -> str | No
     return guessed
 
 
+def upload_part_with_retry(
+    *,
+    file_path: Path,
+    upload_host: str,
+    bucket: str,
+    object_key: str,
+    upload_token: str,
+    upload_id: str,
+    part_number: int,
+    offset: int,
+    chunk_size: int,
+    total_parts: int,
+) -> dict[str, object]:
+    with file_path.open("rb") as input_file:
+        input_file.seek(offset)
+        chunk = input_file.read(chunk_size)
+    if len(chunk) != chunk_size:
+        raise RuntimeError(
+            f"Unexpected chunk size for part {part_number}: expected {chunk_size}, got {len(chunk)}"
+        )
+
+    for attempt in range(1, 4):
+        print(
+            f"Uploading part {part_number}/{total_parts} attempt {attempt} size={len(chunk)} bytes",
+            flush=True,
+        )
+        try:
+            result = upload_part(
+                upload_host,
+                bucket,
+                object_key,
+                upload_token,
+                upload_id,
+                part_number,
+                chunk,
+            )
+            break
+        except urllib.error.HTTPError as error:
+            if attempt == 3:
+                detail = error.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"Qiniu uploadPart failed for part {part_number}: HTTP {error.code} {detail}"
+                ) from error
+            time.sleep(attempt)
+        except urllib.error.URLError as error:
+            if attempt == 3:
+                raise RuntimeError(f"Qiniu uploadPart failed for part {part_number}: {error}") from error
+            time.sleep(attempt)
+
+    etag = str(result.get("etag", "")).strip()
+    if not etag:
+        raise RuntimeError(f"Qiniu uploadPart did not return etag for part {part_number}: {result}")
+    print(f"Uploaded part {part_number}/{total_parts}", flush=True)
+    return {"partNumber": part_number, "etag": etag}
+
+
 def upload_file(
     *,
     file_path: Path,
@@ -155,6 +213,7 @@ def upload_file(
     upload_host: str,
     upload_token: str,
     part_size: int,
+    concurrency: int,
     file_name: str | None,
     mime_type: str | None,
 ) -> dict[str, object]:
@@ -168,56 +227,44 @@ def upload_file(
         raise ValueError(f"Too many parts: {total_parts} > {MAX_PARTS}")
 
     upload_id = initiate_upload(upload_host, bucket, object_key, upload_token)
+    worker_count = min(max(concurrency, 1), total_parts)
     print(
         f"Started Qiniu multipart upload: key={object_key} size={file_size} bytes "
-        f"part_size={actual_part_size} total_parts={total_parts}",
+        f"part_size={actual_part_size} total_parts={total_parts} concurrency={worker_count}",
         flush=True,
     )
 
     uploaded_parts: list[dict[str, object]] = []
     try:
-        with file_path.open("rb") as input_file:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_map = {}
             for part_number in range(1, total_parts + 1):
-                chunk = input_file.read(actual_part_size)
-                if not chunk:
-                    raise RuntimeError(f"Unexpected EOF while reading part {part_number}")
-                for attempt in range(1, 4):
-                    print(
-                        f"Uploading part {part_number}/{total_parts} attempt {attempt} "
-                        f"size={len(chunk)} bytes",
-                        flush=True,
-                    )
-                    try:
-                        result = upload_part(
-                            upload_host,
-                            bucket,
-                            object_key,
-                            upload_token,
-                            upload_id,
-                            part_number,
-                            chunk,
-                        )
-                        break
-                    except urllib.error.HTTPError as error:
-                        if attempt == 3:
-                            detail = error.read().decode("utf-8", errors="replace")
-                            raise RuntimeError(
-                                f"Qiniu uploadPart failed for part {part_number}: "
-                                f"HTTP {error.code} {detail}"
-                            ) from error
-                        time.sleep(attempt)
-                    except urllib.error.URLError as error:
-                        if attempt == 3:
-                            raise RuntimeError(
-                                f"Qiniu uploadPart failed for part {part_number}: {error}"
-                            ) from error
-                        time.sleep(attempt)
+                offset = (part_number - 1) * actual_part_size
+                chunk_size = min(actual_part_size, file_size - offset)
+                future = executor.submit(
+                    upload_part_with_retry,
+                    file_path=file_path,
+                    upload_host=upload_host,
+                    bucket=bucket,
+                    object_key=object_key,
+                    upload_token=upload_token,
+                    upload_id=upload_id,
+                    part_number=part_number,
+                    offset=offset,
+                    chunk_size=chunk_size,
+                    total_parts=total_parts,
+                )
+                future_map[future] = part_number
 
-                etag = str(result.get("etag", "")).strip()
-                if not etag:
-                    raise RuntimeError(f"Qiniu uploadPart did not return etag for part {part_number}: {result}")
-                uploaded_parts.append({"partNumber": part_number, "etag": etag})
-                print(f"Uploaded part {part_number}/{total_parts}", flush=True)
+            for future in as_completed(future_map):
+                try:
+                    uploaded_parts.append(future.result())
+                except Exception:
+                    for pending_future in future_map:
+                        pending_future.cancel()
+                    raise
+
+        uploaded_parts.sort(key=lambda part: int(part["partNumber"]))
 
         complete_result = complete_upload(
             upload_host,
@@ -244,6 +291,7 @@ def main() -> int:
     parser.add_argument("--upload-host", default=os.environ.get("QINIU_UPLOAD_HOST", "https://up-z1.qiniup.com"))
     parser.add_argument("--upload-token", required=True, help="Qiniu upload token scoped to the target key")
     parser.add_argument("--part-size", type=int, default=DEFAULT_PART_SIZE, help="part size in bytes")
+    parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY, help="parallel part uploads")
     parser.add_argument("--file-name", help="original file name recorded in Qiniu")
     parser.add_argument("--mime-type", help="explicit MIME type")
     args = parser.parse_args()
@@ -262,6 +310,7 @@ def main() -> int:
         upload_host=args.upload_host,
         upload_token=args.upload_token,
         part_size=args.part_size,
+        concurrency=args.concurrency,
         file_name=file_name,
         mime_type=mime_type,
     )
