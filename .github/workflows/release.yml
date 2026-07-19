@@ -87,18 +87,24 @@ jobs:
 
       - name: Upload APK and manifest to Qiniu
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          QINIU_BUCKET: files
+          QINIU_UPLOAD_HOST: https://up-z1.qiniup.com
         run: |
-          curl --fail --show-error --retry 3 \
-            -F "token=${QINIU_APK_TOKEN}" \
-            -F "key=${QINIU_APK_KEY}" \
-            -F "file=@app/build/outputs/apk/release/app-release.apk" \
-            https://up-z1.qiniup.com
-          curl --fail --show-error --retry 3 \
-            -F "token=${QINIU_MANIFEST_TOKEN}" \
-            -F "key=${QINIU_MANIFEST_KEY}" \
-            -F "mimeType=application/json" \
-            -F "file=@version.json" \
-            https://up-z1.qiniup.com
+          python3 scripts/qiniu_multipart_upload.py \
+            --file app/build/outputs/apk/release/app-release.apk \
+            --key "${QINIU_APK_KEY}" \
+            --bucket "${QINIU_BUCKET}" \
+            --upload-host "${QINIU_UPLOAD_HOST}" \
+            --upload-token "${QINIU_APK_TOKEN}" \
+            --mime-type application/vnd.android.package-archive
+          python3 scripts/qiniu_multipart_upload.py \
+            --file version.json \
+            --key "${QINIU_MANIFEST_KEY}" \
+            --bucket "${QINIU_BUCKET}" \
+            --upload-host "${QINIU_UPLOAD_HOST}" \
+            --upload-token "${QINIU_MANIFEST_TOKEN}" \
+            --mime-type application/json
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
