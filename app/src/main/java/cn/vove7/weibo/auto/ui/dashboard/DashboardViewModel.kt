@@ -17,6 +17,7 @@ import cn.vove7.weibo.auto.data.repo.CommentTemplateRepository
 import cn.vove7.weibo.auto.data.repo.PostTemplateRepository
 import cn.vove7.weibo.auto.data.repo.TaskExecutionLogRepository
 import cn.vove7.weibo.auto.data.update.UpdateChecker
+import cn.vove7.weibo.auto.data.update.UpdateInstaller
 import cn.vove7.weibo.auto.domain.model.TaskType
 import cn.vove7.weibo.auto.domain.task.TaskRunner
 import cn.vove7.weibo.auto.domain.weibo.WeiboAppController
@@ -48,11 +49,17 @@ data class DashboardUiState(
     val accessibilityReady: Boolean = false,
     val isBusy: Boolean = false,
     val busyMessage: String? = null,
+    val updateDownload: UpdateDownloadUiState? = null,
     val showTaskDialog: Boolean = false,
     val showTemplateManagementPage: Boolean = false,
     val showAutomationSettingsDialog: Boolean = false,
     val showTaskExecutionLogsPage: Boolean = false,
     val selectedTaskExecutionLogId: Long? = null,
+)
+
+data class UpdateDownloadUiState(
+    val version: String,
+    val progress: Int,
 )
 
 class DashboardViewModel(
@@ -89,6 +96,7 @@ class DashboardViewModel(
 
     private var reconnectPollJob: Job? = null
     private var busyJob: Job? = null
+    private var updateJob: Job? = null
     private val overlay get() = (getApplication() as WeiboApp).taskOverlay
 
     init {
@@ -392,21 +400,49 @@ class DashboardViewModel(
     }
 
     fun checkForUpdate() {
-        viewModelScope.launch {
+        if (updateJob?.isActive == true) {
+            viewModelScope.launch { _events.emit("正在处理更新，请稍候") }
+            return
+        }
+        updateJob = viewModelScope.launch {
             _events.emit("正在检查更新…")
             try {
                 val result = UpdateChecker.check(BuildConfig.VERSION_NAME)
-                _events.emit(
-                    if (result.updateAvailable) {
-                        "发现新版本 v${result.latestVersion}，请到项目 Releases 页面更新"
-                    } else {
-                        "当前已是最新版本 v${BuildConfig.VERSION_NAME}"
-                    }
+                if (!result.updateAvailable) {
+                    _events.emit("当前已是最新版本 v${BuildConfig.VERSION_NAME}")
+                    return@launch
+                }
+                val apkUrl = result.apkDownloadUrl
+                    ?: error("新版本未提供 APK 安装包")
+                _uiState.update {
+                    it.copy(updateDownload = UpdateDownloadUiState(result.latestVersion, 0))
+                }
+                _events.emit("发现新版本 v${result.latestVersion}，开始下载")
+                UpdateInstaller.downloadAndInstall(
+                    context = getApplication(),
+                    downloadUrl = apkUrl,
+                    version = result.latestVersion,
+                    onStatus = _events::tryEmit,
+                    onDownloadProgress = { progress ->
+                        _uiState.update { state ->
+                            state.copy(
+                                updateDownload = state.updateDownload?.copy(progress = progress),
+                            )
+                        }
+                    },
                 )
             } catch (e: Exception) {
-                _events.emit("检查更新失败: ${e.message ?: e.javaClass.simpleName}")
+                Timber.e(e, "Update flow failed")
+                _events.emit("更新失败: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                updateJob = null
+                _uiState.update { it.copy(updateDownload = null) }
             }
         }
+    }
+
+    fun resumePendingUpdateInstallation() {
+        UpdateInstaller.resumePendingInstall(getApplication(), _events::tryEmit)
     }
 
     fun updateAutomationSettings(settings: AutomationSettings) {

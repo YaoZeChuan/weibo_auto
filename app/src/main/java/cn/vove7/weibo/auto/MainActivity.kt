@@ -33,5 +33,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccessibilityState()
+        viewModel.resumePendingUpdateInstallation()
     }
 }
