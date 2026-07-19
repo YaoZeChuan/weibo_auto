@@ -17,7 +17,7 @@ import urllib.request
 from pathlib import Path
 
 MIN_PART_SIZE = 1 << 20
-DEFAULT_PART_SIZE = 8 << 20
+DEFAULT_PART_SIZE = 4 << 20
 MAX_PARTS = 10_000
 
 
@@ -182,6 +182,11 @@ def upload_file(
                 if not chunk:
                     raise RuntimeError(f"Unexpected EOF while reading part {part_number}")
                 for attempt in range(1, 4):
+                    print(
+                        f"Uploading part {part_number}/{total_parts} attempt {attempt} "
+                        f"size={len(chunk)} bytes",
+                        flush=True,
+                    )
                     try:
                         result = upload_part(
                             upload_host,
