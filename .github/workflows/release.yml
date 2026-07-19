@@ -51,6 +51,10 @@ jobs:
           QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
           QINIU_BUCKET: files
         run: |
+          if [ -z "$QINIU_ACCESS_KEY" ] || [ -z "$QINIU_SECRET_KEY" ]; then
+            echo "::error::Missing QINIU_ACCESS_KEY or QINIU_SECRET_KEY GitHub Actions secret."
+            exit 1
+          fi
           python3 - <<'PY'
           import base64
           import hashlib
