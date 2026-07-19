@@ -37,12 +37,15 @@ jobs:
           test "$VERSION" = "$APP_VERSION"
           APK_KEY="yaozechuan/xiaomai-v${VERSION}.apk"
           APK_URL="${QINIU_DOWNLOAD_DOMAIN}/${APK_KEY}"
+          MANIFEST_URL="${QINIU_DOWNLOAD_DOMAIN}/yaozechuan/version.json"
           SHA256=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')
           cat > version.json <<EOF
           {"version":"${VERSION}","apkUrl":"${APK_URL}","sha256":"${SHA256}"}
           EOF
           echo "QINIU_APK_KEY=$APK_KEY" >> "$GITHUB_ENV"
           echo "QINIU_MANIFEST_KEY=yaozechuan/version.json" >> "$GITHUB_ENV"
+          echo "QINIU_APK_URL=$APK_URL" >> "$GITHUB_ENV"
+          echo "QINIU_MANIFEST_URL=$MANIFEST_URL" >> "$GITHUB_ENV"
 
       - name: Create Qiniu upload tokens
         if: startsWith(github.ref, 'refs/tags/')
@@ -105,6 +108,48 @@ jobs:
             --upload-host "${QINIU_UPLOAD_HOST}" \
             --upload-token "${QINIU_MANIFEST_TOKEN}" \
             --mime-type application/json
+
+      - name: Refresh Qiniu CDN cache
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import hmac
+          import json
+          import os
+          import urllib.request
+
+          access_key = os.environ["QINIU_ACCESS_KEY"]
+          secret_key = os.environ["QINIU_SECRET_KEY"]
+          path = "/v2/tune/refresh"
+          body = json.dumps(
+              {
+                  "urls": [
+                      os.environ["QINIU_APK_URL"],
+                      os.environ["QINIU_MANIFEST_URL"],
+                  ]
+              },
+              separators=(",", ":"),
+          )
+          sign = base64.urlsafe_b64encode(
+              hmac.new(secret_key.encode("utf-8"), f"{path}\n".encode("utf-8"), hashlib.sha1).digest()
+          ).decode("ascii")
+          request = urllib.request.Request(
+              "https://fusion.qiniuapi.com/v2/tune/refresh",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type": "application/json",
+                  "Authorization": f"QBox {access_key}:{sign}",
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              print(response.read().decode("utf-8"))
+          PY
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
