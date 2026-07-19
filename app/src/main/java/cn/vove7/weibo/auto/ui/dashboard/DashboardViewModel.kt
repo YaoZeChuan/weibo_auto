@@ -49,10 +49,10 @@ data class DashboardUiState(
     val isBusy: Boolean = false,
     val busyMessage: String? = null,
     val showTaskDialog: Boolean = false,
-    val showPostTemplateDialog: Boolean = false,
-    val showCommentTemplateDialog: Boolean = false,
+    val showTemplateManagementPage: Boolean = false,
     val showAutomationSettingsDialog: Boolean = false,
-    val showTaskExecutionLogsDialog: Boolean = false,
+    val showTaskExecutionLogsPage: Boolean = false,
+    val selectedTaskExecutionLogId: Long? = null,
 )
 
 class DashboardViewModel(
@@ -357,20 +357,12 @@ class DashboardViewModel(
         _uiState.update { it.copy(showTaskDialog = false) }
     }
 
-    fun openPostTemplateDialog() {
-        _uiState.update { it.copy(showPostTemplateDialog = true) }
+    fun openTemplateManagementPage() {
+        _uiState.update { it.copy(showTemplateManagementPage = true) }
     }
 
-    fun dismissPostTemplateDialog() {
-        _uiState.update { it.copy(showPostTemplateDialog = false) }
-    }
-
-    fun openCommentTemplateDialog() {
-        _uiState.update { it.copy(showCommentTemplateDialog = true) }
-    }
-
-    fun dismissCommentTemplateDialog() {
-        _uiState.update { it.copy(showCommentTemplateDialog = false) }
+    fun closeTemplateManagementPage() {
+        _uiState.update { it.copy(showTemplateManagementPage = false) }
     }
 
     fun openAutomationSettingsDialog() {
@@ -381,12 +373,22 @@ class DashboardViewModel(
         _uiState.update { it.copy(showAutomationSettingsDialog = false) }
     }
 
-    fun openTaskExecutionLogsDialog() {
-        _uiState.update { it.copy(showTaskExecutionLogsDialog = true) }
+    fun openTaskExecutionLogsPage() {
+        _uiState.update { it.copy(showTaskExecutionLogsPage = true, selectedTaskExecutionLogId = null) }
     }
 
-    fun dismissTaskExecutionLogsDialog() {
-        _uiState.update { it.copy(showTaskExecutionLogsDialog = false) }
+    fun openTaskExecutionLogDetail(id: Long) {
+        _uiState.update { it.copy(selectedTaskExecutionLogId = id) }
+    }
+
+    fun closeTaskExecutionLogsPage() {
+        _uiState.update {
+            if (it.selectedTaskExecutionLogId != null) {
+                it.copy(selectedTaskExecutionLogId = null)
+            } else {
+                it.copy(showTaskExecutionLogsPage = false)
+            }
+        }
     }
 
     fun checkForUpdate() {

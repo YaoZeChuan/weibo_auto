@@ -71,26 +71,33 @@ fun DashboardScreen(
         }
     }
 
+    if (uiState.showTemplateManagementPage) {
+        TemplateManagementScreen(
+            postTemplates = postTemplates,
+            commentTemplates = commentTemplates,
+            onBack = viewModel::closeTemplateManagementPage,
+            onAddPostTemplate = viewModel::addPostTemplate,
+            onAddCommentTemplate = viewModel::addCommentTemplate,
+            onDeletePostTemplate = viewModel::deletePostTemplate,
+            onDeleteCommentTemplate = viewModel::deleteCommentTemplate,
+        )
+        return
+    }
+
+    if (uiState.showTaskExecutionLogsPage) {
+        TaskLogsScreen(
+            logs = taskExecutionLogs,
+            selectedLogId = uiState.selectedTaskExecutionLogId,
+            onBack = viewModel::closeTaskExecutionLogsPage,
+            onLogClick = viewModel::openTaskExecutionLogDetail,
+        )
+        return
+    }
+
     if (uiState.showTaskDialog) {
         TaskSelectDialog(
             onDismiss = viewModel::dismissTaskDialog,
             onConfirm = viewModel::confirmTasks,
-        )
-    }
-    if (uiState.showPostTemplateDialog) {
-        PostTemplateDialog(
-            templates = postTemplates,
-            onDismiss = viewModel::dismissPostTemplateDialog,
-            onAdd = viewModel::addPostTemplate,
-            onDelete = viewModel::deletePostTemplate,
-        )
-    }
-    if (uiState.showCommentTemplateDialog) {
-        CommentTemplateDialog(
-            templates = commentTemplates,
-            onDismiss = viewModel::dismissCommentTemplateDialog,
-            onAdd = viewModel::addCommentTemplate,
-            onDelete = viewModel::deleteCommentTemplate,
         )
     }
     if (uiState.showAutomationSettingsDialog) {
@@ -100,26 +107,19 @@ fun DashboardScreen(
             onConfirm = viewModel::updateAutomationSettings,
         )
     }
-    if (uiState.showTaskExecutionLogsDialog) {
-        TaskExecutionLogDialog(
-            logs = taskExecutionLogs,
-            onDismiss = viewModel::dismissTaskExecutionLogsDialog,
-        )
-    }
-
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        "微博助手 v${BuildConfig.VERSION_NAME}",
+                        "小麦助手 v${BuildConfig.VERSION_NAME}",
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
                     )
                 },
                 actions = {
-                    TextButton(onClick = viewModel::openTaskExecutionLogsDialog) {
+                    TextButton(onClick = viewModel::openTaskExecutionLogsPage) {
                         Text("日志", color = MaterialTheme.colorScheme.onPrimary)
                     }
                     IconButton(onClick = viewModel::checkForUpdate) {
@@ -170,8 +170,7 @@ fun DashboardScreen(
                     onRefresh = viewModel::refreshAccounts,
                     onSuperLike = viewModel::checkSuperLike,
                     onStart = viewModel::onStartClicked,
-                    onPostTemplates = viewModel::openPostTemplateDialog,
-                    onCommentTemplates = viewModel::openCommentTemplateDialog,
+                    onTemplateManagement = viewModel::openTemplateManagementPage,
                     onAutomationSettings = viewModel::openAutomationSettingsDialog,
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -280,8 +279,7 @@ private fun ActionRow(
     onRefresh: () -> Unit,
     onSuperLike: () -> Unit,
     onStart: () -> Unit,
-    onPostTemplates: () -> Unit,
-    onCommentTemplates: () -> Unit,
+    onTemplateManagement: () -> Unit,
     onAutomationSettings: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -359,10 +357,10 @@ private fun ActionRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             OutlinedButton(
-                onClick = onPostTemplates,
+                onClick = onTemplateManagement,
                 enabled = enabled,
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(2f)
                     .height(36.dp),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 8.dp),
@@ -373,27 +371,7 @@ private fun ActionRow(
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
-                    "发帖模板",
-                    modifier = Modifier.padding(start = 4.dp),
-                    fontSize = 12.sp,
-                )
-            }
-            OutlinedButton(
-                onClick = onCommentTemplates,
-                enabled = enabled,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(36.dp),
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp),
-            ) {
-                Icon(
-                    Icons.Default.EditNote,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    "评论模板",
+                    "模板管理",
                     modifier = Modifier.padding(start = 4.dp),
                     fontSize = 12.sp,
                 )
