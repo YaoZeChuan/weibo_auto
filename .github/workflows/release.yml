@@ -27,6 +27,75 @@ jobs:
       - name: Build release APK
         run: ./gradlew :app:assembleRelease --no-daemon
 
+      - name: Prepare Qiniu update files
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          QINIU_DOWNLOAD_DOMAIN: https://file.qingzhou.link
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION=$(sed -nE 's/^[[:space:]]*versionName "([^"]+)"/\1/p' app/build.gradle)
+          test "$VERSION" = "$APP_VERSION"
+          APK_KEY="yaozechuan/xiaomai-v${VERSION}.apk"
+          APK_URL="${QINIU_DOWNLOAD_DOMAIN}/${APK_KEY}"
+          SHA256=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')
+          cat > version.json <<EOF
+          {"version":"${VERSION}","apkUrl":"${APK_URL}","sha256":"${SHA256}"}
+          EOF
+          echo "QINIU_APK_KEY=$APK_KEY" >> "$GITHUB_ENV"
+          echo "QINIU_MANIFEST_KEY=yaozechuan/version.json" >> "$GITHUB_ENV"
+
+      - name: Create Qiniu upload tokens
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
+          QINIU_BUCKET: files
+        run: |
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import hmac
+          import json
+          import os
+          import time
+
+          def upload_token(key):
+              policy = {
+                  "scope": f"{os.environ['QINIU_BUCKET']}:{key}",
+                  "deadline": int(time.time()) + 3600,
+              }
+              encoded_policy = base64.urlsafe_b64encode(
+                  json.dumps(policy, separators=(",", ":")).encode()
+              ).decode()
+              signature = base64.urlsafe_b64encode(
+                  hmac.new(
+                      os.environ["QINIU_SECRET_KEY"].encode(),
+                      encoded_policy.encode(),
+                      hashlib.sha1,
+                  ).digest()
+              ).decode()
+              return f"{os.environ['QINIU_ACCESS_KEY']}:{signature}:{encoded_policy}"
+
+          with open(os.environ["GITHUB_ENV"], "a") as env_file:
+              env_file.write(f"QINIU_APK_TOKEN={upload_token(os.environ['QINIU_APK_KEY'])}\n")
+              env_file.write(f"QINIU_MANIFEST_TOKEN={upload_token(os.environ['QINIU_MANIFEST_KEY'])}\n")
+          PY
+
+      - name: Upload APK and manifest to Qiniu
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          curl --fail --show-error --retry 3 \
+            -F "token=${QINIU_APK_TOKEN}" \
+            -F "key=${QINIU_APK_KEY}" \
+            -F "file=@app/build/outputs/apk/release/app-release.apk" \
+            https://up-z1.qiniup.com
+          curl --fail --show-error --retry 3 \
+            -F "token=${QINIU_MANIFEST_TOKEN}" \
+            -F "key=${QINIU_MANIFEST_KEY}" \
+            -F "mimeType=application/json" \
+            -F "file=@version.json" \
+            https://up-z1.qiniup.com
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

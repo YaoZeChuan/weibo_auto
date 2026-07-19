@@ -16,6 +16,7 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import timber.log.Timber
@@ -32,10 +33,17 @@ object UpdateInstaller {
         context: Context,
         downloadUrl: String,
         version: String,
+        expectedSha256: String?,
         onStatus: (String) -> Unit,
         onDownloadProgress: (Int) -> Unit,
     ) {
         val apk = downloadApk(context, downloadUrl, version, onStatus, onDownloadProgress)
+        try {
+            verifySha256(apk, expectedSha256)
+        } catch (error: Throwable) {
+            apk.delete()
+            throw error
+        }
         withContext(Dispatchers.Main) {
             savePendingApk(context, apk)
             requestInstall(context, apk, onStatus)
@@ -64,12 +72,11 @@ object UpdateInstaller {
         val apk = File(updatesDir, "xiaomai-assistant-$version.apk")
         updatesDir.listFiles()?.filter { it != apk }?.forEach { it.delete() }
 
-        val acceleratedUrl = GitHubAccelerator.accelerate(downloadUrl)
-        Timber.i("Update APK URL: original=%s, accelerated=%s", downloadUrl, acceleratedUrl)
+        Timber.i("Update APK URL: %s", downloadUrl)
         try {
             // The accelerator redirects GitHub assets to a signed CDN URL. Downloading ranges
             // from that final URL allows four connections in parallel, like a browser download.
-            val finalUrl = resolveDownloadUrl(acceleratedUrl)
+            val finalUrl = resolveDownloadUrl(downloadUrl)
             val totalBytes = contentLength(finalUrl)
             Timber.i("Update APK final URL: %s, bytes=%d", finalUrl, totalBytes)
             onStatus("正在加速下载 v$version…")
@@ -89,7 +96,7 @@ object UpdateInstaller {
             onDownloadProgress(100)
             apk
         } catch (error: Throwable) {
-            Timber.e(error, "Update APK download failed: %s", acceleratedUrl)
+            Timber.e(error, "Update APK download failed: %s", downloadUrl)
             apk.delete()
             throw error
         }
@@ -315,6 +322,24 @@ object UpdateInstaller {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
             },
         )
+    }
+
+    private fun verifySha256(apk: File, expectedSha256: String?) {
+        if (expectedSha256.isNullOrBlank()) return
+        val actualSha256 = MessageDigest.getInstance("SHA-256").run {
+            apk.inputStream().buffered().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    update(buffer, 0, count)
+                }
+            }
+            digest().joinToString("") { byte -> "%02x".format(byte) }
+        }
+        require(actualSha256.equals(expectedSha256.trim(), ignoreCase = true)) {
+            "安装包校验失败，请重新下载"
+        }
     }
 
     private fun canRequestPackageInstalls(context: Context): Boolean =

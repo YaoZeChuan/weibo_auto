@@ -11,45 +11,38 @@ data class UpdateCheckResult(
     val latestVersion: String,
     val updateAvailable: Boolean,
     val apkDownloadUrl: String?,
+    val apkSha256: String?,
 )
 
 object UpdateChecker {
-    private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/YaoZeChuan/weibo_auto/releases/latest"
+    private const val UPDATE_MANIFEST_URL =
+        "https://file.qingzhou.link/yaozechuan/version.json"
 
     suspend fun check(currentVersion: String): UpdateCheckResult = withContext(Dispatchers.IO) {
-        val acceleratedApiUrl = GitHubAccelerator.accelerate(LATEST_RELEASE_URL)
-        Timber.i("Update API URL: %s", acceleratedApiUrl)
-        val connection = (URL(acceleratedApiUrl).openConnection() as HttpURLConnection).apply {
+        Timber.i("Update manifest URL: %s", UPDATE_MANIFEST_URL)
+        val connection = (URL(UPDATE_MANIFEST_URL).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 10_000
             requestMethod = "GET"
-            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Cache-Control", "no-cache")
             setRequestProperty("User-Agent", "XiaomiAssistant-Android")
         }
         try {
             if (connection.responseCode !in 200..299) {
                 error("更新服务器返回 ${connection.responseCode}")
             }
-            val release = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-            val latest = release.optString("tag_name").removePrefix("v")
+            val manifest = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            val latest = manifest.optString("version").removePrefix("v")
             require(latest.isNotBlank()) { "未读取到最新版本" }
-            val apkUrl = release.optJSONArray("assets")
-                ?.let { assets ->
-                    (0 until assets.length())
-                        .asSequence()
-                        .map { assets.optJSONObject(it) }
-                        .firstOrNull { asset ->
-                            asset?.optString("name")?.endsWith(".apk", ignoreCase = true) == true
-                        }
-                        ?.optString("browser_download_url")
-                        ?.takeIf { it.isNotBlank() }
-                }
-            Timber.i("Update release parsed: version=%s, apkUrl=%s", latest, apkUrl)
+            val apkUrl = manifest.optString("apkUrl").takeIf { it.isNotBlank() }
+            val sha256 = manifest.optString("sha256").takeIf { it.isNotBlank() }
+            Timber.i("Update manifest parsed: version=%s, apkUrl=%s", latest, apkUrl)
             UpdateCheckResult(
                 latestVersion = latest,
                 updateAvailable = compareVersions(latest, currentVersion) > 0,
                 apkDownloadUrl = apkUrl,
+                apkSha256 = sha256,
             )
         } finally {
             connection.disconnect()

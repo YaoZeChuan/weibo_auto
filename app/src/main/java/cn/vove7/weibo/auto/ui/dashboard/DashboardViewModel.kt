@@ -422,6 +422,7 @@ class DashboardViewModel(
                     context = getApplication(),
                     downloadUrl = apkUrl,
                     version = result.latestVersion,
+                    expectedSha256 = result.apkSha256,
                     onStatus = _events::tryEmit,
                     onDownloadProgress = { progress ->
                         _uiState.update { state ->
