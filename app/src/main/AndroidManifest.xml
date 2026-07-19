@@ -4,36 +4,35 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <queries>
-        <package android:name="com.android.chrome" />
+        <package android:name="com.sina.weibo" />
     </queries>
-    <instrumentation
-        android:name=".MyInstrumentation"
-        android:targetPackage="${applicationId}" />
+
     <application
-        android:name=".DemoApp"
+        android:name=".WeiboApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
-        <uses-library android:name="android.test.runner" />
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".DrawableActivity" />
 
         <service
-            android:name=".service.AppAccessibilityService"
+            android:name=".service.WeiboAccessibilityService"
             android:description="@string/base_ser_desc"
             android:exported="false"
             android:label="@string/app_name"
@@ -41,17 +40,18 @@
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
-
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_config" />
         </service>
 
-
         <service
-            android:name=".service.ForegroundService"
-            android:foregroundServiceType="specialUse" />
-
+            android:name=".service.KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keep process alive while running Weibo automation tasks" />
+        </service>
     </application>
-
 </manifest>

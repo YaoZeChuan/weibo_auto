@@ -20,6 +20,11 @@ import kotlin.math.min
 abstract class ViewFinder<T : ViewFinder<T>>(
     val node: ViewNode? = null
 ) {
+    companion object {
+        /** 防止无障碍树环/异常深树导致 StackOverflowError；微博「我」页树较深，40 可能截断 */
+        const val MAX_TRAVERSE_DEPTH = 60
+    }
+
     @Suppress("PropertyName")
     val DEBUG = FinderConfig.DEBUG_LOG
 
@@ -159,10 +164,16 @@ abstract class ViewFinder<T : ViewFinder<T>>(
         includeInvisible: Boolean = false,
         list: MutableList<ViewNode>? = null,
         depth: Int = 0,
+        // 必须跨递归共享，否则环检测失效 → StackOverflowError
         nodeSet: MutableSet<AcsNode> = mutableSetOf()
     ): ViewNode? {
         ensureActive()
         node ?: return null
+        // 防止异常深树 / 环状节点把调用栈撑爆
+        if (depth > MAX_TRAVERSE_DEPTH) {
+            if (DEBUG) Timber.w("traverseAllNode hit max depth=$MAX_TRAVERSE_DEPTH")
+            return null
+        }
         if (node.node in nodeSet) return null
         nodeSet.add(node.node)
         val interrupt = AtomicBoolean(false)
@@ -187,7 +198,10 @@ abstract class ViewFinder<T : ViewFinder<T>>(
                     Timber.d("skip children search $childNode")
                 }
             } else {
-                val r = traverseAllNode(childNode, includeInvisible, list, depth + 1)
+                // 关键：必须传入同一个 nodeSet，否则每层新建集合导致环检测失效
+                val r = traverseAllNode(
+                    childNode, includeInvisible, list, depth + 1, nodeSet
+                )
                 if (list == null && r != null) {
                     return r
                 }
@@ -203,6 +217,10 @@ abstract class ViewFinder<T : ViewFinder<T>>(
     ): ViewNode? {
         ensureNotInterrupt()
         node ?: return null
+        if (depth > MAX_TRAVERSE_DEPTH) {
+            if (DEBUG) Timber.w("traverseAllNodeBlocking hit max depth=$MAX_TRAVERSE_DEPTH")
+            return null
+        }
         if (node.hashCode() in nodeSet) return null
         nodeSet.add(node.hashCode())
         val interrupt = AtomicBoolean(false)

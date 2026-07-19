@@ -111,7 +111,8 @@ class ViewNode : ViewOperation {
         }
     }
 
-    override val id: String
+    // 与 ViewOperation 一致：多数节点无 resource-id，必须可空，否则 NPE
+    override val id: String?
         get() = node.viewIdResourceName
 
     override val className get() = node.className?.toString()

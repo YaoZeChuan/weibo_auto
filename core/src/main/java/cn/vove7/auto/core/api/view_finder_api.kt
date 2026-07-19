@@ -124,7 +124,12 @@ fun ViewNode.printWithChild(
     includeGone: Boolean = true,
     prefix: String = "",
     level: Int = 0,
+    visited: MutableSet<Int> = mutableSetOf(),
+    maxDepth: Int = 40,
 ) {
+    if (level > maxDepth) return
+    val identity = System.identityHashCode(node)
+    if (!visited.add(identity)) return
     val d = "%02d".format(level)
     if (level == 0) {
         sb.appendLine("00[0/0] $d " + toString())
@@ -137,7 +142,7 @@ fun ViewNode.printWithChild(
             sb.appendLine("$d$prefix$connector[${i + 1}/${lastIndex + 1}] " + it.toString())
         }
         val newPrefix = prefix + if (isLast) "  " else " ┃ "
-        it?.printWithChild(sb, includeGone, newPrefix, level + 1)
+        it?.printWithChild(sb, includeGone, newPrefix, level + 1, visited, maxDepth)
     }
 }
 
