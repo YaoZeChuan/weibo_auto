@@ -157,9 +157,17 @@ fun DashboardScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp),
+                .padding(horizontal = 12.dp),
             ) {
                 Spacer(modifier = Modifier.height(8.dp))
+                uiState.availableUpdate?.let { update ->
+                    NewVersionCard(
+                        update = update,
+                        onUpdate = viewModel::startAvailableUpdate,
+                        onIgnore = viewModel::ignoreAvailableUpdate,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
                 uiState.updateDownload?.let { update ->
                     UpdateDownloadProgressCard(update)
                     Spacer(modifier = Modifier.height(8.dp))
@@ -275,6 +283,45 @@ fun DashboardScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewVersionCard(
+    update: AvailableUpdateUiState,
+    onUpdate: () -> Unit,
+    onIgnore: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                text = "检测到新版本 v${update.version}",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Spacer(modifier = Modifier.height(5.dp))
+            Text(
+                text = "是否立即更新？",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onIgnore) { Text("忽略") }
+                Spacer(modifier = Modifier.size(8.dp))
+                Button(onClick = onUpdate) { Text("更新") }
             }
         }
     }

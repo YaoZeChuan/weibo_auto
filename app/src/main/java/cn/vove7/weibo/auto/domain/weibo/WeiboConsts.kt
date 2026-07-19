@@ -47,7 +47,10 @@ object WeiboConsts {
     const val BROWSE_DURATION_MS = 120_000L
 
     /** 浏览时每次滑动后最少停留（毫秒） */
-    const val BROWSE_STAY_MS = 4_000L
+    const val BROWSE_STAY_MS = 6_000L
+
+    /** 签到成功弹窗中的成功文案。 */
+    const val CHECK_IN_SUCCESS_REMINDER_TEXT = "接收本超话签到提醒推送"
 
     /**
      * 首页左上角「超话」入口（UI Automator / dump 实测）：

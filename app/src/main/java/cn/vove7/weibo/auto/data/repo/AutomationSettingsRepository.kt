@@ -56,6 +56,12 @@ class AutomationSettingsRepository(context: Context) {
         const val MAX_BROWSE_SWIPE_COUNT = 200
         const val DEFAULT_BROWSE_SWIPE_COUNT = 40
 
+        fun defaultSettings() = AutomationSettings(
+            dailyCommentLimit = WeiboConsts.DAILY_COMMENT_LIMIT,
+            browseStaySeconds = (WeiboConsts.BROWSE_STAY_MS / 1_000).toInt(),
+            browseSwipeCount = DEFAULT_BROWSE_SWIPE_COUNT,
+        )
+
         private const val PREFERENCES_NAME = "automation_settings"
         private const val KEY_DAILY_COMMENT_LIMIT = "daily_comment_limit"
         private const val KEY_BROWSE_STAY_SECONDS = "browse_stay_seconds"

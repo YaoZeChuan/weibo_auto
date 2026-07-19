@@ -69,6 +69,34 @@ interface AccountDao {
     @Query(
         """
         UPDATE weibo_accounts
+        SET dailyTaskDayStart = :dayStart,
+            dailyCheckInStatus = :checkInStatus,
+            dailyBrowseCompletedCount = :browseCompleted,
+            dailyBrowseRequiredCount = :browseRequired,
+            dailyCommentCompletedCount = :commentCompleted,
+            dailyCommentRequiredCount = :commentRequired,
+            dailyRepostCompletedCount = :repostCompleted,
+            dailyRepostRequiredCount = :repostRequired,
+            lastRefreshAt = :at
+        WHERE id = :id
+        """
+    )
+    suspend fun updateDailyTaskProgress(
+        id: Long,
+        dayStart: Long,
+        checkInStatus: String,
+        browseCompleted: Int,
+        browseRequired: Int,
+        commentCompleted: Int,
+        commentRequired: Int,
+        repostCompleted: Int,
+        repostRequired: Int,
+        at: Long = System.currentTimeMillis(),
+    )
+
+    @Query(
+        """
+        UPDATE weibo_accounts
         SET lastCheckAt = :at,
             lastRefreshAt = :at
         WHERE id = :id

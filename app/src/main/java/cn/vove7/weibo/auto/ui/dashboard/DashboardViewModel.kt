@@ -49,6 +49,7 @@ data class DashboardUiState(
     val accessibilityReady: Boolean = false,
     val isBusy: Boolean = false,
     val busyMessage: String? = null,
+    val availableUpdate: AvailableUpdateUiState? = null,
     val updateDownload: UpdateDownloadUiState? = null,
     val showTaskDialog: Boolean = false,
     val showTemplateManagementPage: Boolean = false,
@@ -60,6 +61,12 @@ data class DashboardUiState(
 data class UpdateDownloadUiState(
     val version: String,
     val progress: Int,
+)
+
+data class AvailableUpdateUiState(
+    val version: String,
+    val apkDownloadUrl: String,
+    val apkSha256: String?,
 )
 
 class DashboardViewModel(
@@ -105,6 +112,7 @@ class DashboardViewModel(
             runCatching { postTemplateRepository.ensureDefault() }
             runCatching { commentTemplateRepository.ensureDefault() }
         }
+        checkForUpdate(silent = true)
         // 悬浮窗：停止任务 / dump / 清日志
         viewModelScope.launch {
             TaskControlHub.commands.collect { cmd ->
@@ -399,30 +407,53 @@ class DashboardViewModel(
         }
     }
 
-    fun checkForUpdate() {
+    fun checkForUpdate(silent: Boolean = false) {
         if (updateJob?.isActive == true) {
-            viewModelScope.launch { _events.emit("正在处理更新，请稍候") }
+            if (!silent) viewModelScope.launch { _events.emit("正在处理更新，请稍候") }
             return
         }
         updateJob = viewModelScope.launch {
-            _events.emit("正在检查更新…")
+            if (!silent) _events.emit("正在检查更新…")
             try {
                 val result = UpdateChecker.check(BuildConfig.VERSION_NAME)
                 if (!result.updateAvailable) {
-                    _events.emit("当前已是最新版本 v${BuildConfig.VERSION_NAME}")
+                    if (!silent) _events.emit("当前已是最新版本 v${BuildConfig.VERSION_NAME}")
                     return@launch
                 }
                 val apkUrl = result.apkDownloadUrl
                     ?: error("新版本未提供 APK 安装包")
                 _uiState.update {
-                    it.copy(updateDownload = UpdateDownloadUiState(result.latestVersion, 0))
+                    it.copy(
+                        availableUpdate = AvailableUpdateUiState(
+                            version = result.latestVersion,
+                            apkDownloadUrl = apkUrl,
+                            apkSha256 = result.apkSha256,
+                        ),
+                    )
                 }
-                _events.emit("发现新版本 v${result.latestVersion}，开始下载")
+            } catch (e: Exception) {
+                Timber.e(e, "Update check failed")
+                if (!silent) _events.emit("检查更新失败: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                updateJob = null
+            }
+        }
+    }
+
+    fun startAvailableUpdate() {
+        val update = _uiState.value.availableUpdate ?: return
+        if (updateJob?.isActive == true) return
+        updateJob = viewModelScope.launch {
+            _uiState.update {
+                it.copy(updateDownload = UpdateDownloadUiState(update.version, 0))
+            }
+            _events.emit("发现新版本 v${update.version}，开始下载")
+            try {
                 UpdateInstaller.downloadAndInstall(
                     context = getApplication(),
-                    downloadUrl = apkUrl,
-                    version = result.latestVersion,
-                    expectedSha256 = result.apkSha256,
+                    downloadUrl = update.apkDownloadUrl,
+                    version = update.version,
+                    expectedSha256 = update.apkSha256,
                     onStatus = _events::tryEmit,
                     onDownloadProgress = { progress ->
                         _uiState.update { state ->
@@ -437,9 +468,13 @@ class DashboardViewModel(
                 _events.emit("更新失败: ${e.message ?: e.javaClass.simpleName}")
             } finally {
                 updateJob = null
-                _uiState.update { it.copy(updateDownload = null) }
+                _uiState.update { it.copy(updateDownload = null, availableUpdate = null) }
             }
         }
+    }
+
+    fun ignoreAvailableUpdate() {
+        _uiState.update { it.copy(availableUpdate = null) }
     }
 
     fun resumePendingUpdateInstallation() {

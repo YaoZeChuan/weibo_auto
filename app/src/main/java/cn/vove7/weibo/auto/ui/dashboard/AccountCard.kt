@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -23,7 +24,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,7 +59,9 @@ fun AccountCard(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showDailyTaskTip by remember(account.id) { mutableStateOf(false) }
     Card(
+        onClick = { showDailyTaskTip = true },
         modifier = modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         shape = RoundedCornerShape(14.dp),
@@ -144,6 +152,51 @@ fun AccountCard(
             }
         }
     }
+
+    if (showDailyTaskTip) {
+        DailyTaskProgressDialog(
+            account = account,
+            onDismiss = { showDailyTaskTip = false },
+        )
+    }
+}
+
+@Composable
+private fun DailyTaskProgressDialog(account: WeiboAccount, onDismiss: () -> Unit) {
+    val detected = account.isDailyTaskDetectedToday()
+    val checkIn = when {
+        !detected -> "未检测"
+        account.dailyCheckInStatus == "COMPLETED" -> "已完成"
+        account.dailyCheckInStatus == "INCOMPLETE" -> "未完成"
+        else -> "未检测"
+    }
+    fun progress(done: Int, required: Int): String =
+        if (!detected || done < 0 || required < 0) "未检测" else "$done/$required"
+    val estimatedScore = if (!detected) {
+        null
+    } else {
+        (if (account.dailyCheckInStatus == "COMPLETED") 8 else 0) +
+            account.dailyBrowseCompletedCount.coerceAtLeast(0) +
+            account.dailyCommentCompletedCount.coerceAtLeast(0) +
+            account.dailyRepostCompletedCount.coerceAtLeast(0)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${account.name} · 今日任务") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("签到：$checkIn")
+                Text("看帖：今日完成次数 ${progress(account.dailyBrowseCompletedCount, account.dailyBrowseRequiredCount)}")
+                Text("评论：今日完成次数 ${progress(account.dailyCommentCompletedCount, account.dailyCommentRequiredCount)}")
+                Text("转发：今日完成次数 ${progress(account.dailyRepostCompletedCount, account.dailyRepostRequiredCount)}")
+                Text("今日预计经验值：${estimatedScore?.let { "+$it" } ?: "未检测"}")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
 }
 
 @Composable

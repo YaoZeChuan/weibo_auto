@@ -50,6 +50,14 @@ class AccountRepository(
                 superLikeLit = old?.superLikeLit ?: false,
                 superLikeExp = old?.superLikeExp ?: -1,
                 checkInDays = old?.checkInDays ?: -1,
+                dailyTaskDayStart = old?.dailyTaskDayStart ?: 0L,
+                dailyCheckInStatus = old?.dailyCheckInStatus ?: "UNKNOWN",
+                dailyBrowseCompletedCount = old?.dailyBrowseCompletedCount ?: -1,
+                dailyBrowseRequiredCount = old?.dailyBrowseRequiredCount ?: -1,
+                dailyCommentCompletedCount = old?.dailyCommentCompletedCount ?: -1,
+                dailyCommentRequiredCount = old?.dailyCommentRequiredCount ?: -1,
+                dailyRepostCompletedCount = old?.dailyRepostCompletedCount ?: -1,
+                dailyRepostRequiredCount = old?.dailyRepostRequiredCount ?: -1,
                 lastCheckAt = old?.lastCheckAt ?: 0L,
                 lastRefreshAt = now,
                 selected = old?.selected ?: false,
@@ -119,6 +127,26 @@ class AccountRepository(
         Timber.i("db updateCheckIn id=$id days=$days")
     }
 
+    suspend fun updateDailyTaskProgress(
+        accountId: Long,
+        progress: cn.vove7.weibo.auto.domain.weibo.WeiboNavigator.DailyTaskProgress,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        accountDao.updateDailyTaskProgress(
+            id = accountId,
+            dayStart = localDayStartMillis(now),
+            checkInStatus = progress.checkInStatus,
+            browseCompleted = progress.browse.completedCount,
+            browseRequired = progress.browse.requiredCount,
+            commentCompleted = progress.comment.completedCount,
+            commentRequired = progress.comment.requiredCount,
+            repostCompleted = progress.repost.completedCount,
+            repostRequired = progress.repost.requiredCount,
+            at = now,
+        )
+        Timber.i("db updateDailyTaskProgress id=$accountId progress=$progress")
+    }
+
     suspend fun applySuperLikeResult(id: Long, lit: Boolean, exp: Int) {
         accountDao.updateSuperLike(id = id, lit = lit, exp = exp)
         Timber.i("db applySuperLikeResult id=$id exp=$exp lit=$lit")
@@ -126,5 +154,14 @@ class AccountRepository(
 
     suspend fun deleteAccount(id: Long) {
         accountDao.deleteById(id)
+    }
+
+    private fun localDayStartMillis(now: Long): Long = java.util.Calendar.getInstance().run {
+        timeInMillis = now
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+        timeInMillis
     }
 }

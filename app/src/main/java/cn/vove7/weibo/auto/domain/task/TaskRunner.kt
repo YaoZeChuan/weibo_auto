@@ -26,6 +26,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 任务执行器：按账号切号，在赵今麦超话内串行执行勾选任务，
@@ -75,14 +78,19 @@ class WeiboTaskRunner(
         Timber.tag(TAG).i(
             "run accounts=${accounts.map { it.name }} tasks=${ordered.map { it.name }}"
         )
+        val executionDetails = mutableListOf<String>()
+        fun report(message: String) {
+            onProgress(message)
+            executionDetails += "${formatDetailTime(System.currentTimeMillis())} $message"
+        }
 
         var opened = false
         var failedAccounts = 0
         var finalResult = TaskExecutionResult.SUCCESS
         var finalDetail: String? = null
         try {
-            onProgress("检查是否在首页…")
-            navigator.ensureWeiboHomeAtStart(appContext, onProgress)
+            report("检查是否在首页…")
+            navigator.ensureWeiboHomeAtStart(appContext, ::report)
             opened = true
 
             accounts.forEachIndexed { index, account ->
@@ -93,24 +101,25 @@ class WeiboTaskRunner(
                 val label = "[${index + 1}/${accounts.size}] ${account.name}"
                 Timber.tag(TAG).i("---- $label begin ----")
                 try {
-                    onProgress("$label：进入账号管理切号…")
-                    navigator.goToAccountManage { p -> onProgress("$label：$p") }
+                    report("$label：进入账号管理切号…")
+                    navigator.goToAccountManage { p -> report("$label：$p") }
                     navigator.switchToAccount(account.name)
+                    report("$label：账号切换完成")
                     // switchToAccount 已等待切换结果；这里只保留较短的就绪兜底，避免无条件长暂停。
                     runCatching { navigator.waitWeiboReady(5_000) }
 
                     // 浏览/发帖：先进入超话；未签到会在 openTargetSuperTopic 内自动签到
                     if (ordered.any { it == TaskType.BROWSE || it == TaskType.POST }) {
-                        onProgress("$label：进入超话「${WeiboConsts.TARGET_SUPER_TOPIC_NAME}」…")
+                        report("$label：进入超话「${WeiboConsts.TARGET_SUPER_TOPIC_NAME}」…")
                         runCatching {
-                            navigator.goToWeiboHome(appContext) { p -> onProgress("$label：$p") }
+                            navigator.goToWeiboHome(appContext) { p -> report("$label：$p") }
                         }
                         val days = navigator.openTargetSuperTopic(
                             topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
-                        ) { p -> onProgress("$label：$p") }
+                        ) { p -> report("$label：签到：$p") }
                         if (days != null) {
                             accountRepository.updateCheckInDays(account.id, days)
-                            onProgress("$label：连签 $days 天")
+                            report("$label：签到结果：成功，连签 $days 天")
                         }
                     }
 
@@ -124,19 +133,19 @@ class WeiboTaskRunner(
                             account = account,
                             task = task,
                             label = label,
-                            onProgress = onProgress,
+                            onProgress = ::report,
                         )
                     }
 
                     // 每个账号任务做完后检测超 LIKE
-                    onProgress("$label：检测超LIKE…")
-                    runSuperLikeForAccount(account, label, onProgress)
+                    report("$label：检测超LIKE…")
+                    runSuperLikeForAccount(account, label, ::report)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     failedAccounts++
                     Timber.tag(TAG).e(e, "account failed ${account.name}")
-                    onProgress("$label：失败 ${e.message ?: e.javaClass.simpleName}")
+                    report("$label：失败 ${e.message ?: e.javaClass.simpleName}")
                     taskRepository.insert(
                         TaskRecord(
                             accountId = account.id,
@@ -148,14 +157,14 @@ class WeiboTaskRunner(
                 }
 
                 if (index < accounts.lastIndex) {
-                    onProgress("返回微博首页，准备下一账号…")
+                    report("返回微博首页，准备下一账号…")
                     runCatching {
-                        navigator.goToWeiboHome(appContext) { p -> onProgress(p) }
+                        navigator.goToWeiboHome(appContext, ::report)
                     }
                     delay(600)
                 }
             }
-            onProgress("全部任务执行完成")
+            report("全部任务执行完成")
             if (failedAccounts > 0) {
                 finalResult = TaskExecutionResult.PARTIAL
                 finalDetail = "$failedAccounts/${accounts.size} 个账号执行失败"
@@ -172,11 +181,15 @@ class WeiboTaskRunner(
             throw e
         } finally {
             withContext(NonCancellable) {
-                taskExecutionLogRepository.finish(executionLogId, finalResult, finalDetail)
+                val detail = buildString {
+                    executionDetails.forEach { appendLine(it) }
+                    append("执行结果：$finalDetail")
+                }
+                taskExecutionLogRepository.finish(executionLogId, finalResult, detail)
             }
             if (opened) {
                 runCatching {
-                    WeiboAppController.finishAndReturn(appContext, onProgress)
+                    WeiboAppController.finishAndReturn(appContext, ::report)
                 }
             }
         }
@@ -211,27 +224,66 @@ class WeiboTaskRunner(
             when (task) {
                 TaskType.BROWSE -> {
                     val hasCommentTemplate = commentTemplateRepository.getAll().isNotEmpty()
-                    val existingCommentCount = taskRepository.countSuccessfulCommentsToday(account.id)
                     val settings = automationSettingsRepository.settings.value
-                    navigator.browseSuperTopicPosts(
-                        context = appContext,
-                        topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
-                        maxSwipeCount = settings.browseSwipeCount,
-                        stayMs = settings.browseStaySeconds * 1_000L,
-                        nextCommentText = commentTemplateRepository::getRandomContent,
-                        existingCommentCount = existingCommentCount,
-                        maxDailyCommentCount = settings.dailyCommentLimit,
-                        onCommentSent = { dailyCount ->
-                            taskRepository.insert(
-                                TaskRecord(
-                                    accountId = account.id,
-                                    taskType = TaskRecordType.COMMENT,
-                                    status = TaskStatus.SUCCESS,
-                                    message = "当日第 $dailyCount 条评论",
+                    var dailyProgress: WeiboNavigator.DailyTaskProgress? = null
+                    for (round in 0 until 3) {
+                        val existingCommentCount = taskRepository.countSuccessfulCommentsToday(account.id)
+                        navigator.browseSuperTopicPosts(
+                            context = appContext,
+                            topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
+                            maxSwipeCount = settings.browseSwipeCount,
+                            stayMs = settings.browseStaySeconds * 1_000L,
+                            nextCommentText = commentTemplateRepository::getRandomContent,
+                            existingCommentCount = existingCommentCount,
+                            maxDailyCommentCount = settings.dailyCommentLimit,
+                            onCommentSent = { dailyCount ->
+                                taskRepository.insert(
+                                    TaskRecord(
+                                        accountId = account.id,
+                                        taskType = TaskRecordType.COMMENT,
+                                        status = TaskStatus.SUCCESS,
+                                        message = "当日第 $dailyCount 条评论",
+                                    )
                                 )
+                            },
+                        ) { p -> onProgress("$label：$p") }
+                        val progress = navigator.inspectDailyTaskProgress { p -> onProgress("$label：$p") }
+                        dailyProgress = progress
+                        accountRepository.updateDailyTaskProgress(account.id, progress)
+                        val checkInStatus = when (progress.checkInStatus) {
+                            "COMPLETED" -> TaskStatus.SUCCESS
+                            "INCOMPLETE" -> TaskStatus.FAILED
+                            else -> TaskStatus.SKIPPED
+                        }
+                        taskRepository.insert(
+                            TaskRecord(
+                                accountId = account.id,
+                                taskType = "CHECK_IN",
+                                status = checkInStatus,
+                                message = "签到：${progress.checkInStatus}",
                             )
-                        },
-                    ) { p -> onProgress("$label：$p") }
+                        )
+                        val checkInResult = when (progress.checkInStatus) {
+                            "COMPLETED" -> "成功"
+                            "INCOMPLETE" -> "失败"
+                            else -> "未检测"
+                        }
+                        onProgress("$label：签到，执行结果：$checkInResult")
+                        onProgress(
+                            "$label：看帖，今日完成次数 " +
+                                "${progress.browse.completedCount}/${progress.browse.requiredCount}"
+                        )
+                        onProgress(
+                            "$label：评论，今日完成次数 " +
+                                "${progress.comment.completedCount}/${progress.comment.requiredCount}"
+                        )
+                        onProgress(
+                            "$label：转发，今日完成次数 " +
+                                "${progress.repost.completedCount}/${progress.repost.requiredCount}"
+                        )
+                        if (dailyProgress?.allCompleted == true || round == 2) break
+                        onProgress("$label：每日任务尚未全部完成，返回超话继续执行…")
+                    }
                     taskRepository.insert(
                         TaskRecord(
                             accountId = account.id,
@@ -324,4 +376,7 @@ class WeiboTaskRunner(
             )
         }
     }
+
+    private fun formatDetailTime(time: Long): String =
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(time))
 }

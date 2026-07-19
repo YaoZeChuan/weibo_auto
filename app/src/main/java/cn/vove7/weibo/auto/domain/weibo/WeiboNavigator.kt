@@ -27,6 +27,30 @@ import timber.log.Timber
  */
 class WeiboNavigator {
 
+    data class DailyTaskCounter(
+        val completedCount: Int = -1,
+        val requiredCount: Int = -1,
+    ) {
+        val isCompleted: Boolean
+            get() = requiredCount > 0 && completedCount >= requiredCount
+    }
+
+    data class DailyTaskProgress(
+        val checkInStatus: String,
+        val browse: DailyTaskCounter,
+        val comment: DailyTaskCounter,
+        val repost: DailyTaskCounter,
+    ) {
+        val signInCompleted: Boolean
+            get() = checkInStatus == "COMPLETED"
+        val browseCompleted: Boolean
+            get() = browse.isCompleted
+        val commentCompleted: Boolean
+            get() = comment.isCompleted
+        val allCompleted: Boolean
+            get() = signInCompleted && browseCompleted && commentCompleted
+    }
+
     companion object {
         private const val TAG = "WeiboNav"
     }
@@ -568,6 +592,19 @@ class WeiboNavigator {
                 val ok = clickSignInRobust(target, round)
                 Timber.tag(TAG).i("performCheckIn: click round=$round ok=$ok")
                 delay(1_200)
+
+                // 签到成功弹窗会显示「接收本超话签到提醒推送」。检测到该文案即视为成功，
+                // 并用系统级 back 关闭弹窗，避免继续等待连签文案并重复点击。
+                if (hasCheckInSuccessReminderText()) {
+                    Timber.tag(TAG).i(
+                        "performCheckIn: success dialog detected, close with system back"
+                    )
+                    onProgress("检测到签到成功弹窗")
+                    back()
+                    delay(300)
+                    return@withContext readCheckInDays()
+                }
+
                 dismissDialogIfAny()
                 val days = waitReadCheckInDays(timeoutMs = 3_500)
                 if (days != null) {
@@ -587,6 +624,11 @@ class WeiboNavigator {
                 error("找到签到按钮但点击未生效（未出现连签天数）")
             }
             error("找不到「签到」按钮")
+        }
+
+    private fun hasCheckInSuccessReminderText(): Boolean =
+        collectAllNodeTexts().any {
+            it.contains(WeiboConsts.CHECK_IN_SUCCESS_REMINDER_TEXT)
         }
 
     /**
@@ -835,6 +877,7 @@ class WeiboNavigator {
             }
 
             val stay = stayMs.coerceAtLeast(1_000L)
+            onProgress("看帖：第 $step 次滑动一次，停留 ${stay / 1000} 秒")
             onProgress("停留阅读 ${stay / 1000}s… 剩余 $remainingSwipes 次")
             delay(stay)
 
@@ -866,6 +909,147 @@ class WeiboNavigator {
         }
         onProgress("浏览结束（滑动 $step/$maxSwipeCount 次，今日评论 $commentCount/$maxDailyCommentCount 条）")
         Timber.tag(TAG).i("browseSuperTopicPosts done steps=$step comments=$commentCount")
+    }
+
+    /**
+     * 浏览后打开超话的每日任务面板，读取签到、看帖、评论完成状态。
+     * 无论是否完成，最后都返回超话页面，便于继续执行浏览任务。
+     */
+    suspend fun inspectDailyTaskProgress(
+        topicName: String = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
+        onProgress: (String) -> Unit = {},
+    ): DailyTaskProgress {
+        onProgress("检查「${topicName}」每日任务完成情况…")
+        if (!clickBottomNavTabByDesc("我的") && !clickBottomNavTabByDesc("我")) {
+            error("找不到超话页面右下角「我的」按钮")
+        }
+        waitForTopicMyPage(topicName)
+
+        val taskEntry = findDailyTaskEntryButton()
+            ?: error("找不到「我在${topicName}超话」页面的每日任务入口")
+        if (!safeClick(taskEntry) && !globalClickNode(taskEntry)) {
+            error("点击每日任务入口失败")
+        }
+        waitForDailyTaskPanel()
+
+        val progress = readDailyTaskProgress()
+        Timber.tag(TAG).i(
+            "dailyTaskProgress signIn=${progress.checkInStatus} " +
+                "browse=${progress.browse.completedCount}/${progress.browse.requiredCount} " +
+                "comment=${progress.comment.completedCount}/${progress.comment.requiredCount} " +
+                "repost=${progress.repost.completedCount}/${progress.repost.requiredCount}"
+        )
+        onProgress(
+            "每日任务：签到${when (progress.checkInStatus) { "COMPLETED" -> "已完成"; "INCOMPLETE" -> "未完成"; else -> "未检测" }}，" +
+                "看帖 ${progress.browse.completedCount}/${progress.browse.requiredCount}，" +
+                "评论 ${progress.comment.completedCount}/${progress.comment.requiredCount}"
+        )
+
+        // 第一次 back 关闭任务面板；若仍停留在「我在…超话」二级页，再 back 回超话。
+        back()
+        delay(500)
+        if (hasTopicMyPageText(topicName)) {
+            back()
+            delay(700)
+        }
+        return progress
+    }
+
+    private suspend fun waitForTopicMyPage(topicName: String) {
+        val end = System.currentTimeMillis() + 8_000
+        while (System.currentTimeMillis() < end) {
+            if (hasTopicMyPageText(topicName)) return
+            delay(300)
+        }
+        error("未进入「我在${topicName}超话」页面")
+    }
+
+    private suspend fun waitForDailyTaskPanel() {
+        val end = System.currentTimeMillis() + 8_000
+        while (System.currentTimeMillis() < end) {
+            val texts = dfsFindViewNodes { true }.mapNotNull { it.text?.toString()?.trim() }
+            if (texts.any { it.contains("每日成长") } ||
+                texts.any { it.contains("签到（随连续签到提高）") }
+            ) return
+            delay(300)
+        }
+        error("每日任务面板加载超时")
+    }
+
+    private suspend fun findDailyTaskEntryButton(): ViewNode? {
+        val end = System.currentTimeMillis() + 8_000
+        while (System.currentTimeMillis() < end) {
+            val w = screenWidth()
+            val h = screenHeight()
+            val candidate = dfsFindViewNodes { node ->
+                node.className.orEmpty().contains("ImageView", ignoreCase = true) &&
+                    node.isClickable() &&
+                    node.bounds.centerX() > w * 0.78f &&
+                    node.bounds.centerY() in (h * 0.15f).toInt()..(h * 0.35f).toInt()
+            }.maxByOrNull { it.bounds.centerY() }
+            if (candidate != null) return candidate
+            delay(300)
+        }
+        return null
+    }
+
+    private fun hasTopicMyPageText(topicName: String): Boolean {
+        val texts = dfsFindViewNodes { true }.mapNotNull { node ->
+            listOfNotNull(
+                node.text?.toString()?.trim(),
+                runCatching { node.desc()?.trim() }.getOrNull(),
+            ).filter { it.isNotEmpty() }
+        }.flatten()
+        return texts.any { it.contains("我在${topicName}超话") } ||
+            texts.any { it.contains("我在") && it.contains(topicName) && it.contains("超话") }
+    }
+
+    private fun readDailyTaskProgress(): DailyTaskProgress {
+        data class TextAt(val text: String, val centerY: Int)
+
+        val texts = dfsFindViewNodes { true }.flatMap { node ->
+            listOfNotNull(
+                node.text?.toString()?.trim(),
+                runCatching { node.desc()?.trim() }.getOrNull(),
+            ).filter { it.isNotEmpty() }.map { TextAt(it, node.bounds.centerY()) }
+        }
+
+        fun rowCounter(label: String, doneLabel: String? = null): DailyTaskCounter {
+            val labels = texts.filter { it.text.trim() == label }
+            for (labelNode in labels) {
+                // 任务的进度文案位于标题正下方。只看向下 180px，
+                // 避免「转发帖子」错误读到上一行「评论帖子」的完成次数。
+                val rowTexts = texts.filter {
+                    it.centerY in labelNode.centerY..(labelNode.centerY + 180)
+                }
+                rowTexts.forEach { row ->
+                    val match = Regex("今日完成次数\\s*(\\d+)\\s*/\\s*(\\d+)").find(row.text)
+                    if (match != null) {
+                        return DailyTaskCounter(
+                            completedCount = match.groupValues[1].toIntOrNull() ?: -1,
+                            requiredCount = match.groupValues[2].toIntOrNull() ?: -1,
+                        )
+                    }
+                }
+                if (rowTexts.any { it.text.contains("已完成") || (doneLabel != null && it.text.contains(doneLabel)) }) {
+                    return DailyTaskCounter(1, 1)
+                }
+            }
+            return DailyTaskCounter()
+        }
+
+        val signIn = rowCounter("签到（随连续签到提高）", "已签到")
+
+        return DailyTaskProgress(
+            checkInStatus = when {
+                signIn.isCompleted -> "COMPLETED"
+                signIn.completedCount >= 0 -> "INCOMPLETE"
+                else -> "UNKNOWN"
+            },
+            browse = rowCounter("看帖"),
+            comment = rowCounter("评论帖子"),
+            repost = rowCounter("转发帖子"),
+        )
     }
 
     private suspend fun clickLatestTab() {
@@ -942,6 +1126,26 @@ class WeiboNavigator {
         if (withText(marker).exist() || containsText(marker).exist() || withDesc(marker).exist() ||
             findBySystemText(marker).isNotEmpty()
         ) return true
+
+        // 部分版本的超话页面不会暴露稳定的标题节点，但页面内容同时包含发帖入口和话题名。
+        // 这两个文案组合出现时，可确认仍在目标超话内部，避免误返回首页重进。
+        val pageTexts = dfsFindViewNodes { true }.flatMap { node ->
+            listOfNotNull(
+                node.text?.toString()?.trim(),
+                runCatching { node.desc()?.trim() }.getOrNull(),
+            ).filter { it.isNotEmpty() }
+        }
+        val hasTopicMarker = pageTexts.any { it.contains("赵今麦超话") }
+        val hasPostEntry = pageTexts.any { it.contains("我来发一帖") }
+        val hasTopicName = pageTexts.any {
+            it.contains(topicName) || it.contains("赵今麦")
+        }
+        if (hasTopicMarker || (hasPostEntry && hasTopicName)) {
+            Timber.tag(TAG).i(
+                "isOnTargetSuperTopicPage: matched topic marker or post entry + topic name fallback"
+            )
+            return true
+        }
 
         val visibleTexts = runCatching { ScreenTextFinder().find() }
             .getOrDefault(emptyList())

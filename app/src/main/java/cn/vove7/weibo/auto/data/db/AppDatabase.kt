@@ -25,7 +25,7 @@ import cn.vove7.weibo.auto.data.entity.WeiboAccount
         CommentTemplate::class,
         TaskExecutionLog::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,7 +45,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "weibo_auto.db",
-                ).addMigrations(MIGRATION_5_6)
+                ).addMigrations(MIGRATION_5_6, MIGRATION_6_7)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { instance = it }
@@ -64,6 +64,19 @@ abstract class AppDatabase : RoomDatabase() {
                         "`result` TEXT NOT NULL, " +
                         "`detail` TEXT)"
                 )
+            }
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyTaskDayStart` INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyCheckInStatus` TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyBrowseCompletedCount` INTEGER NOT NULL DEFAULT -1")
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyBrowseRequiredCount` INTEGER NOT NULL DEFAULT -1")
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyCommentCompletedCount` INTEGER NOT NULL DEFAULT -1")
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyCommentRequiredCount` INTEGER NOT NULL DEFAULT -1")
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyRepostCompletedCount` INTEGER NOT NULL DEFAULT -1")
+                database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyRepostRequiredCount` INTEGER NOT NULL DEFAULT -1")
             }
         }
     }

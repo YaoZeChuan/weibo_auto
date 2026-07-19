@@ -3,6 +3,7 @@ package cn.vove7.weibo.auto.ui.dashboard
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +78,17 @@ fun AutomationSettingsDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            Row {
+                TextButton(onClick = {
+                    val defaults = AutomationSettingsRepository.defaultSettings()
+                    commentLimit = defaults.dailyCommentLimit.toString()
+                    staySeconds = defaults.browseStaySeconds.toString()
+                    swipeCount = defaults.browseSwipeCount.toString()
+                }) {
+                    Text("恢复默认")
+                }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
         },
     )
 }
