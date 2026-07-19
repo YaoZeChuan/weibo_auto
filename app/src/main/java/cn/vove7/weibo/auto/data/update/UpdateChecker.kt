@@ -16,7 +16,7 @@ data class UpdateCheckResult(
 
 object UpdateChecker {
     private const val UPDATE_MANIFEST_URL =
-        "https://file.qingzhou.link/yaozechuan/version.json"
+        "https://miniapi.o3.yaozc.ccwu.cc/files/yaozechuan/version.json"
 
     suspend fun check(currentVersion: String): UpdateCheckResult = withContext(Dispatchers.IO) {
         Timber.i("Update manifest URL: %s", UPDATE_MANIFEST_URL)

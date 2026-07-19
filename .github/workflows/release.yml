@@ -27,78 +27,59 @@ jobs:
       - name: Build release APK
         run: ./gradlew :app:assembleRelease --no-daemon
 
-      - name: Prepare Qiniu update files
+      - name: Prepare MinIO update files
         if: startsWith(github.ref, 'refs/tags/')
         env:
-          QINIU_DOWNLOAD_DOMAIN: https://file.qingzhou.link
+          MINIO_DOWNLOAD_BASE_URL: https://miniapi.o3.yaozc.ccwu.cc/files
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          APP_VERSION=$(sed -nE 's/^[[:space:]]*versionName "([^"]+)"/\1/p' app/build.gradle)
-          test "$VERSION" = "$APP_VERSION"
-          APK_KEY="yaozechuan/xiaomai-v${VERSION}.apk"
-          APK_URL="${QINIU_DOWNLOAD_DOMAIN}/${APK_KEY}"
-          SHA256=$(sha256sum app/build/outputs/apk/release/app-release.apk | awk '{print $1}')
-          cat > version.json <<EOF
-          {"version":"${VERSION}","apkUrl":"${APK_URL}","sha256":"${SHA256}"}
-          EOF
-          echo "QINIU_APK_KEY=$APK_KEY" >> "$GITHUB_ENV"
-          echo "QINIU_MANIFEST_KEY=yaozechuan/version.json" >> "$GITHUB_ENV"
-
-      - name: Create Qiniu upload tokens
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
-          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
-          QINIU_BUCKET: files
-        run: |
-          if [ -z "$QINIU_ACCESS_KEY" ] || [ -z "$QINIU_SECRET_KEY" ]; then
-            echo "::error::Missing QINIU_ACCESS_KEY or QINIU_SECRET_KEY GitHub Actions secret."
-            exit 1
-          fi
           python3 - <<'PY'
-          import base64
           import hashlib
-          import hmac
           import json
           import os
-          import time
+          import re
+          from pathlib import Path
 
-          def upload_token(key):
-              policy = {
-                  "scope": f"{os.environ['QINIU_BUCKET']}:{key}",
-                  "deadline": int(time.time()) + 3600,
-              }
-              encoded_policy = base64.urlsafe_b64encode(
-                  json.dumps(policy, separators=(",", ":")).encode()
-              ).decode()
-              signature = base64.urlsafe_b64encode(
-                  hmac.new(
-                      os.environ["QINIU_SECRET_KEY"].encode(),
-                      encoded_policy.encode(),
-                      hashlib.sha1,
-                  ).digest()
-              ).decode()
-              return f"{os.environ['QINIU_ACCESS_KEY']}:{signature}:{encoded_policy}"
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          gradle = Path("app/build.gradle").read_text(encoding="utf-8")
+          match = re.search(r'^\s*versionName\s+"([^"]+)"', gradle, re.MULTILINE)
+          if not match:
+              raise SystemExit("Could not read versionName from app/build.gradle")
+          if version != match.group(1):
+              raise SystemExit(f"Tag v{version} does not match versionName {match.group(1)}")
 
+          apk_path = Path("app/build/outputs/apk/release/app-release.apk")
+          apk_key = f"yaozechuan/xiaomai-v{version}.apk"
+          apk_url = f"{os.environ['MINIO_DOWNLOAD_BASE_URL'].rstrip('/')}/{apk_key}"
+          manifest = {
+              "version": version,
+              "apkUrl": apk_url,
+              "sha256": hashlib.sha256(apk_path.read_bytes()).hexdigest(),
+          }
+          Path("version.json").write_text(json.dumps(manifest), encoding="utf-8")
           with open(os.environ["GITHUB_ENV"], "a") as env_file:
-              env_file.write(f"QINIU_APK_TOKEN={upload_token(os.environ['QINIU_APK_KEY'])}\n")
-              env_file.write(f"QINIU_MANIFEST_TOKEN={upload_token(os.environ['QINIU_MANIFEST_KEY'])}\n")
+              env_file.write(f"MINIO_APK_KEY={apk_key}\n")
+              env_file.write("MINIO_MANIFEST_KEY=yaozechuan/version.json\n")
           PY
 
-      - name: Upload APK and manifest to Qiniu
+      - name: Upload APK and manifest to MinIO
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: "true"
+          MINIO_ENDPOINT: https://miniapi.o3.yaozc.ccwu.cc
         run: |
-          curl --fail --show-error --retry 3 \
-            -F "token=${QINIU_APK_TOKEN}" \
-            -F "key=${QINIU_APK_KEY}" \
-            -F "file=@app/build/outputs/apk/release/app-release.apk" \
-            https://up-z1.qiniup.com
-          curl --fail --show-error --retry 3 \
-            -F "token=${QINIU_MANIFEST_TOKEN}" \
-            -F "key=${QINIU_MANIFEST_KEY}" \
-            -F "mimeType=application/json" \
-            -F "file=@version.json" \
-            https://up-z1.qiniup.com
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "::error::Missing MINIO_ACCESS_KEY or MINIO_SECRET_KEY GitHub Actions secret."
+            exit 1
+          fi
+          aws configure set default.s3.addressing_style path
+          aws configure set default.s3.max_concurrent_requests 10
+          aws s3 cp app/build/outputs/apk/release/app-release.apk "s3://files/${MINIO_APK_KEY}" \
+            --endpoint-url "$MINIO_ENDPOINT" --no-progress
+          aws s3 cp version.json "s3://files/${MINIO_MANIFEST_KEY}" \
+            --endpoint-url "$MINIO_ENDPOINT" --no-progress
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
