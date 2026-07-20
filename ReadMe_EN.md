@@ -1,6 +1,6 @@
 # Android-Accessibility-Api
 
-[中文](ReadMe.md) | English
+[中文](README.md) | English
 
 > Wrapped Accessibility-Api for Android.
 

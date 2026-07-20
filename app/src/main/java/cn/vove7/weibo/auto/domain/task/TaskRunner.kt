@@ -8,6 +8,7 @@ import cn.vove7.weibo.auto.data.entity.TaskStatus
 import cn.vove7.weibo.auto.data.entity.TaskExecutionResult
 import cn.vove7.weibo.auto.data.entity.WeiboAccount
 import cn.vove7.weibo.auto.data.repo.AccountRepository
+import cn.vove7.weibo.auto.data.repo.AutomationSettings
 import cn.vove7.weibo.auto.data.repo.AutomationSettingsRepository
 import cn.vove7.weibo.auto.data.repo.CommentTemplateRepository
 import cn.vove7.weibo.auto.data.repo.PostTemplateRepository
@@ -56,6 +57,8 @@ class WeiboTaskRunner(
 
     companion object {
         private const val TAG = "WeiboTaskRunner"
+        private const val BROWSE_SWIPES_PER_DAILY_GROUP = 10
+        private const val MAX_BROWSE_SUPPLEMENT_ROUNDS = 3
     }
 
     override suspend fun run(
@@ -225,64 +228,47 @@ class WeiboTaskRunner(
                 TaskType.BROWSE -> {
                     val hasCommentTemplate = commentTemplateRepository.getAll().isNotEmpty()
                     val settings = automationSettingsRepository.settings.value
-                    var dailyProgress: WeiboNavigator.DailyTaskProgress? = null
-                    for (round in 0 until 3) {
-                        val existingCommentCount = taskRepository.countSuccessfulCommentsToday(account.id)
-                        navigator.browseSuperTopicPosts(
-                            context = appContext,
-                            topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
-                            maxSwipeCount = settings.browseSwipeCount,
-                            stayMs = settings.browseStaySeconds * 1_000L,
-                            nextCommentText = commentTemplateRepository::getRandomContent,
-                            existingCommentCount = existingCommentCount,
-                            maxDailyCommentCount = settings.dailyCommentLimit,
-                            onCommentSent = { dailyCount ->
-                                taskRepository.insert(
-                                    TaskRecord(
-                                        accountId = account.id,
-                                        taskType = TaskRecordType.COMMENT,
-                                        status = TaskStatus.SUCCESS,
-                                        message = "当日第 $dailyCount 条评论",
-                                    )
-                                )
-                            },
-                        ) { p -> onProgress("$label：$p") }
-                        val progress = navigator.inspectDailyTaskProgress { p -> onProgress("$label：$p") }
-                        dailyProgress = progress
-                        accountRepository.updateDailyTaskProgress(account.id, progress)
-                        val checkInStatus = when (progress.checkInStatus) {
-                            "COMPLETED" -> TaskStatus.SUCCESS
-                            "INCOMPLETE" -> TaskStatus.FAILED
-                            else -> TaskStatus.SKIPPED
+                    runBrowsePass(
+                        account = account,
+                        label = label,
+                        swipeCount = settings.browseSwipeCount,
+                        settings = settings,
+                        onProgress = onProgress,
+                    )
+                    var dailyProgress = inspectAndRecordDailyTaskProgress(
+                        account = account,
+                        label = label,
+                        onProgress = onProgress,
+                    )
+
+                    var supplementRound = 0
+                    while (!dailyProgress.browseCompleted) {
+                        val missingGroups = dailyProgress.missingBrowseGroupCount()
+                        if (missingGroups == null) {
+                            onProgress("$label：未检测到看帖任务进度，跳过补滑")
+                            break
                         }
-                        taskRepository.insert(
-                            TaskRecord(
-                                accountId = account.id,
-                                taskType = "CHECK_IN",
-                                status = checkInStatus,
-                                message = "签到：${progress.checkInStatus}",
-                            )
-                        )
-                        val checkInResult = when (progress.checkInStatus) {
-                            "COMPLETED" -> "成功"
-                            "INCOMPLETE" -> "失败"
-                            else -> "未检测"
+                        if (supplementRound >= MAX_BROWSE_SUPPLEMENT_ROUNDS) {
+                            onProgress("$label：看帖仍未完成，已达到补滑轮次上限")
+                            break
                         }
-                        onProgress("$label：签到，执行结果：$checkInResult")
+                        supplementRound++
+                        val supplementSwipes = missingGroups * BROWSE_SWIPES_PER_DAILY_GROUP
                         onProgress(
-                            "$label：看帖，今日完成次数 " +
-                                "${progress.browse.completedCount}/${progress.browse.requiredCount}"
+                            "$label：看帖还差 $missingGroups 组，补滑 $supplementSwipes 次后继续检测"
                         )
-                        onProgress(
-                            "$label：评论，今日完成次数 " +
-                                "${progress.comment.completedCount}/${progress.comment.requiredCount}"
+                        runBrowsePass(
+                            account = account,
+                            label = label,
+                            swipeCount = supplementSwipes,
+                            settings = settings,
+                            onProgress = onProgress,
                         )
-                        onProgress(
-                            "$label：转发，今日完成次数 " +
-                                "${progress.repost.completedCount}/${progress.repost.requiredCount}"
+                        dailyProgress = inspectAndRecordDailyTaskProgress(
+                            account = account,
+                            label = label,
+                            onProgress = onProgress,
                         )
-                        if (dailyProgress?.allCompleted == true || round == 2) break
-                        onProgress("$label：每日任务尚未全部完成，返回超话继续执行…")
                     }
                     taskRepository.insert(
                         TaskRecord(
@@ -331,6 +317,82 @@ class WeiboTaskRunner(
             // 单任务失败不阻断同账号后续任务
             onProgress("$label：${task.label}失败 ${e.message}")
         }
+    }
+
+    private suspend fun runBrowsePass(
+        account: WeiboAccount,
+        label: String,
+        swipeCount: Int,
+        settings: AutomationSettings,
+        onProgress: (String) -> Unit,
+    ) {
+        if (swipeCount <= 0) return
+        val existingCommentCount = taskRepository.countSuccessfulCommentsToday(account.id)
+        navigator.browseSuperTopicPosts(
+            context = appContext,
+            topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
+            maxSwipeCount = swipeCount,
+            stayMs = settings.browseStaySeconds * 1_000L,
+            nextCommentText = commentTemplateRepository::getRandomContent,
+            existingCommentCount = existingCommentCount,
+            maxDailyCommentCount = settings.dailyCommentLimit,
+            onCommentSent = { dailyCount ->
+                taskRepository.insert(
+                    TaskRecord(
+                        accountId = account.id,
+                        taskType = TaskRecordType.COMMENT,
+                        status = TaskStatus.SUCCESS,
+                        message = "当日第 $dailyCount 条评论",
+                    )
+                )
+            },
+        ) { p -> onProgress("$label：$p") }
+    }
+
+    private suspend fun inspectAndRecordDailyTaskProgress(
+        account: WeiboAccount,
+        label: String,
+        onProgress: (String) -> Unit,
+    ): WeiboNavigator.DailyTaskProgress {
+        val progress = navigator.inspectDailyTaskProgress { p -> onProgress("$label：$p") }
+        accountRepository.updateDailyTaskProgress(account.id, progress)
+        val checkInStatus = when (progress.checkInStatus) {
+            "COMPLETED" -> TaskStatus.SUCCESS
+            "INCOMPLETE" -> TaskStatus.FAILED
+            else -> TaskStatus.SKIPPED
+        }
+        taskRepository.insert(
+            TaskRecord(
+                accountId = account.id,
+                taskType = "CHECK_IN",
+                status = checkInStatus,
+                message = "签到：${progress.checkInStatus}",
+            )
+        )
+        val checkInResult = when (progress.checkInStatus) {
+            "COMPLETED" -> "成功"
+            "INCOMPLETE" -> "失败"
+            else -> "未检测"
+        }
+        onProgress("$label：签到，执行结果：$checkInResult")
+        onProgress(
+            "$label：看帖，今日完成次数 " +
+                "${progress.browse.completedCount}/${progress.browse.requiredCount}"
+        )
+        onProgress(
+            "$label：评论，今日完成次数 " +
+                "${progress.comment.completedCount}/${progress.comment.requiredCount}"
+        )
+        onProgress(
+            "$label：转发，今日完成次数 " +
+                "${progress.repost.completedCount}/${progress.repost.requiredCount}"
+        )
+        return progress
+    }
+
+    private fun WeiboNavigator.DailyTaskProgress.missingBrowseGroupCount(): Int? {
+        if (browse.completedCount < 0 || browse.requiredCount <= 0) return null
+        return (browse.requiredCount - browse.completedCount).coerceAtLeast(0)
     }
 
     private suspend fun runSuperLikeForAccount(
