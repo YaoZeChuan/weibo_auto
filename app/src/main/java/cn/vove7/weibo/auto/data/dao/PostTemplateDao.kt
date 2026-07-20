@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import cn.vove7.weibo.auto.data.entity.PostTemplate
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +27,9 @@ interface PostTemplateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(template: PostTemplate): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(templates: List<PostTemplate>)
+
     @Update
     suspend fun update(template: PostTemplate)
 
@@ -37,4 +41,13 @@ interface PostTemplateDao {
 
     @Query("DELETE FROM post_templates WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM post_templates")
+    suspend fun deleteAll()
+
+    @Transaction
+    suspend fun replaceAll(templates: List<PostTemplate>) {
+        deleteAll()
+        insertAll(templates)
+    }
 }

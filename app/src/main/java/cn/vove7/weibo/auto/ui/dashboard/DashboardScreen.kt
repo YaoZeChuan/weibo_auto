@@ -83,6 +83,9 @@ fun DashboardScreen(
             onAddCommentTemplate = viewModel::addCommentTemplate,
             onDeletePostTemplate = viewModel::deletePostTemplate,
             onDeleteCommentTemplate = viewModel::deleteCommentTemplate,
+            isUpdatingTemplateTexts = uiState.isUpdatingTemplateTexts,
+            onUpdateTemplateTexts = viewModel::updateTemplateTexts,
+            snackbarHostState = snackbarHostState,
         )
         return
     }

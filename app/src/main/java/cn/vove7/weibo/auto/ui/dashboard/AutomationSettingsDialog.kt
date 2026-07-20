@@ -28,15 +28,19 @@ fun AutomationSettingsDialog(
     onConfirm: (AutomationSettings) -> Unit,
 ) {
     var commentLimit by remember(current) { mutableStateOf(current.dailyCommentLimit.toString()) }
+    var waterPostCount by remember(current) { mutableStateOf(current.waterPostCount.toString()) }
     var staySeconds by remember(current) { mutableStateOf(current.browseStaySeconds.toString()) }
     var swipeCount by remember(current) { mutableStateOf(current.browseSwipeCount.toString()) }
     val settings = AutomationSettings(
         dailyCommentLimit = commentLimit.toIntOrNull() ?: -1,
+        waterPostCount = waterPostCount.toIntOrNull() ?: -1,
         browseStaySeconds = staySeconds.toIntOrNull() ?: -1,
         browseSwipeCount = swipeCount.toIntOrNull() ?: -1,
     )
     val valid = settings.dailyCommentLimit in
         AutomationSettingsRepository.MIN_DAILY_COMMENT_LIMIT..AutomationSettingsRepository.MAX_DAILY_COMMENT_LIMIT &&
+        settings.waterPostCount in
+        AutomationSettingsRepository.MIN_WATER_POST_COUNT..AutomationSettingsRepository.MAX_WATER_POST_COUNT &&
         settings.browseStaySeconds in
         AutomationSettingsRepository.MIN_BROWSE_STAY_SECONDS..AutomationSettingsRepository.MAX_BROWSE_STAY_SECONDS &&
         settings.browseSwipeCount in
@@ -61,6 +65,11 @@ fun AutomationSettingsDialog(
                     label = "每日评论上限（0-99）",
                 )
                 NumberField(
+                    value = waterPostCount,
+                    onValueChange = { waterPostCount = it },
+                    label = "水贴数量（1-99）",
+                )
+                NumberField(
                     value = staySeconds,
                     onValueChange = { staySeconds = it },
                     label = "每次滑动后停留秒数（1-30）",
@@ -82,6 +91,7 @@ fun AutomationSettingsDialog(
                 TextButton(onClick = {
                     val defaults = AutomationSettingsRepository.defaultSettings()
                     commentLimit = defaults.dailyCommentLimit.toString()
+                    waterPostCount = defaults.waterPostCount.toString()
                     staySeconds = defaults.browseStaySeconds.toString()
                     swipeCount = defaults.browseSwipeCount.toString()
                 }) {

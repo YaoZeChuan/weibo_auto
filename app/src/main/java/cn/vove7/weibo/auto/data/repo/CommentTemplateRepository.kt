@@ -33,6 +33,17 @@ class CommentTemplateRepository(
         dao.deleteById(id)
     }
 
+    suspend fun replaceAll(contents: List<String>) {
+        val templates = contents.normalizedTemplates().mapIndexed { index, text ->
+            CommentTemplate(
+                content = text,
+                updatedAt = System.currentTimeMillis() + contents.size - index,
+            )
+        }
+        require(templates.isNotEmpty()) { "评论模板不能为空" }
+        dao.replaceAll(templates)
+    }
+
     suspend fun ensureDefault() {
         if (dao.getAll().isNotEmpty()) return
         add(
@@ -41,3 +52,8 @@ class CommentTemplateRepository(
         )
     }
 }
+
+private fun List<String>.normalizedTemplates(): List<String> =
+    map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import cn.vove7.weibo.auto.data.entity.CommentTemplate
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +27,9 @@ interface CommentTemplateDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(template: CommentTemplate): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(templates: List<CommentTemplate>)
+
     @Update
     suspend fun update(template: CommentTemplate)
 
@@ -37,4 +41,13 @@ interface CommentTemplateDao {
 
     @Query("DELETE FROM comment_templates WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM comment_templates")
+    suspend fun deleteAll()
+
+    @Transaction
+    suspend fun replaceAll(templates: List<CommentTemplate>) {
+        deleteAll()
+        insertAll(templates)
+    }
 }

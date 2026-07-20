@@ -298,15 +298,19 @@ class WeiboTaskRunner(
                     )
                 }
                 TaskType.POST -> {
-                    val content = postTemplateRepository.getRandomContent()
-                        ?: error("没有预制发帖内容，请先在「发帖模板」中添加")
-                    navigator.performPost(content) { p -> onProgress("$label：$p") }
+                    val waterPostCount = automationSettingsRepository.settings.value.waterPostCount
+                    repeat(waterPostCount) { index ->
+                        val content = postTemplateRepository.getRandomContent()
+                            ?: error("没有预制发帖内容，请先在「发帖模板」中添加")
+                        onProgress("$label：水贴 ${index + 1}/$waterPostCount")
+                        navigator.performPost(content) { p -> onProgress("$label：$p") }
+                    }
                     taskRepository.insert(
                         TaskRecord(
                             accountId = account.id,
                             taskType = task.name,
                             status = TaskStatus.SUCCESS,
-                            message = "发帖完成",
+                            message = "发帖完成，共 $waterPostCount 条",
                         )
                     )
                 }

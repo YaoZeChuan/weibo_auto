@@ -42,6 +42,17 @@ class PostTemplateRepository(
         dao.deleteById(id)
     }
 
+    suspend fun replaceAll(contents: List<String>) {
+        val templates = contents.normalizedTemplates().mapIndexed { index, text ->
+            PostTemplate(
+                content = text,
+                updatedAt = System.currentTimeMillis() + contents.size - index,
+            )
+        }
+        require(templates.isNotEmpty()) { "发帖模板不能为空" }
+        dao.replaceAll(templates)
+    }
+
     /** 首次启动时若无模板，写入默认文案 */
     suspend fun ensureDefault() {
         if (dao.getAll().isNotEmpty()) return
@@ -51,3 +62,8 @@ class PostTemplateRepository(
         )
     }
 }
+
+private fun List<String>.normalizedTemplates(): List<String> =
+    map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()

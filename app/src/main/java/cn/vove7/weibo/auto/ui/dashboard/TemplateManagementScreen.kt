@@ -22,15 +22,18 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -63,6 +66,9 @@ fun TemplateManagementScreen(
     onAddCommentTemplate: (String) -> Unit,
     onDeletePostTemplate: (Long) -> Unit,
     onDeleteCommentTemplate: (Long) -> Unit,
+    isUpdatingTemplateTexts: Boolean,
+    onUpdateTemplateTexts: () -> Unit,
+    snackbarHostState: SnackbarHostState,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(COMMENT_TAB) }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -79,12 +85,28 @@ fun TemplateManagementScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
+                actions = {
+                    TextButton(
+                        onClick = onUpdateTemplateTexts,
+                        enabled = !isUpdatingTemplateTexts,
+                    ) {
+                        if (isUpdatingTemplateTexts) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text("更新文案")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground,
                 ),
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showAddDialog = true },

@@ -16,6 +16,7 @@ import cn.vove7.weibo.auto.data.repo.AutomationSettingsRepository
 import cn.vove7.weibo.auto.data.repo.CommentTemplateRepository
 import cn.vove7.weibo.auto.data.repo.PostTemplateRepository
 import cn.vove7.weibo.auto.data.repo.TaskExecutionLogRepository
+import cn.vove7.weibo.auto.data.update.TemplateTextUpdater
 import cn.vove7.weibo.auto.data.update.UpdateChecker
 import cn.vove7.weibo.auto.data.update.UpdateInstaller
 import cn.vove7.weibo.auto.domain.model.TaskType
@@ -53,6 +54,7 @@ data class DashboardUiState(
     val updateDownload: UpdateDownloadUiState? = null,
     val showTaskDialog: Boolean = false,
     val showTemplateManagementPage: Boolean = false,
+    val isUpdatingTemplateTexts: Boolean = false,
     val showAutomationSettingsDialog: Boolean = false,
     val showTaskExecutionLogsPage: Boolean = false,
     val selectedTaskExecutionLogId: Long? = null,
@@ -104,6 +106,7 @@ class DashboardViewModel(
     private var reconnectPollJob: Job? = null
     private var busyJob: Job? = null
     private var updateJob: Job? = null
+    private var templateTextUpdateJob: Job? = null
     private val overlay get() = (getApplication() as WeiboApp).taskOverlay
 
     init {
@@ -379,6 +382,31 @@ class DashboardViewModel(
 
     fun closeTemplateManagementPage() {
         _uiState.update { it.copy(showTemplateManagementPage = false) }
+    }
+
+    fun updateTemplateTexts() {
+        if (templateTextUpdateJob?.isActive == true) {
+            viewModelScope.launch { _events.emit("正在更新文案，请稍候") }
+            return
+        }
+        templateTextUpdateJob = viewModelScope.launch {
+            _uiState.update { it.copy(isUpdatingTemplateTexts = true) }
+            _events.emit("正在更新文案…")
+            try {
+                val update = TemplateTextUpdater.download()
+                postTemplateRepository.replaceAll(update.postTexts)
+                commentTemplateRepository.replaceAll(update.commentTexts)
+                _events.emit(
+                    "文案更新完成：发帖 ${update.postTexts.size} 条，评论 ${update.commentTexts.size} 条"
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "Template text update failed")
+                _events.emit("更新文案失败: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                templateTextUpdateJob = null
+                _uiState.update { it.copy(isUpdatingTemplateTexts = false) }
+            }
+        }
     }
 
     fun openAutomationSettingsDialog() {
