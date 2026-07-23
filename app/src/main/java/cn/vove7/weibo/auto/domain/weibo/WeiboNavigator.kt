@@ -53,6 +53,7 @@ class WeiboNavigator {
 
     companion object {
         private const val TAG = "WeiboNav"
+        private const val COMMENT_POST_KEYWORD = "赵今麦"
     }
 
     fun openWeibo(context: Context) {
@@ -593,7 +594,7 @@ class WeiboNavigator {
                 Timber.tag(TAG).i("performCheckIn: click round=$round ok=$ok")
                 delay(1_200)
 
-                // 签到成功弹窗会显示「接收本超话签到提醒推送」。检测到该文案即视为成功，
+                // 签到成功弹窗会显示「你的状态是」。检测到该文案即视为成功，
                 // 并用系统级 back 关闭弹窗，避免继续等待连签文案并重复点击。
                 if (hasCheckInSuccessReminderText()) {
                     Timber.tag(TAG).i(
@@ -1156,7 +1157,7 @@ class WeiboNavigator {
     }
 
     /**
-     * 随机找一条可见帖子正文（contentTextView，避开 #话题# 区域）：
+     * 随机找一条正文包含「赵今麦」的可见帖子（contentTextView，避开 #话题# 区域）：
      * 长按 → 评论 → 输入模板 → 确保未勾选「同时转发」→ 点「评论」发送。
      */
     private suspend fun commentOnVisiblePost(
@@ -1166,7 +1167,8 @@ class WeiboNavigator {
         onProgress("寻找可评论帖子…")
         val body = findRandomPostBodyText()
         if (body == null) {
-            Timber.tag(TAG).w("commentOnVisiblePost: no contentTextView")
+            Timber.tag(TAG).w("commentOnVisiblePost: no eligible contentTextView")
+            onProgress("未找到包含「$COMMENT_POST_KEYWORD」的可评论帖子")
             return false
         }
         Timber.tag(TAG).i("commentOnVisiblePost: long-press ${describeNode(body)}")
@@ -1264,7 +1266,7 @@ class WeiboNavigator {
     }
 
     /**
-     * 随机选一条正文：id=contentTextView，在中部可见区。
+     * 随机选一条包含评论关键词的正文：id=contentTextView，在中部可见区。
      * 长按点偏正文中心略下，减少点到 #话题# 链接。
      */
     private fun findRandomPostBodyText(): ViewNode? {
@@ -1276,18 +1278,26 @@ class WeiboNavigator {
             val b = it.bounds
             b.width() > screenWidth() / 3 &&
                 b.height() in 40..900 &&
-                b.centerY() in (h * 0.22f).toInt()..(h * 0.82f).toInt()
+                b.centerY() in (h * 0.22f).toInt()..(h * 0.82f).toInt() &&
+                nodeContainsCommentKeyword(it)
         }
         if (candidates.isEmpty()) {
-            // 兜底：desc 含较长正文且非纯话题
+            // 兜底：desc 含较长正文、评论关键词且非纯话题
             return dfsFindViewNodes { n ->
                 val d = n.desc()?.trim().orEmpty()
                 d.length in 12..400 &&
+                    d.contains(COMMENT_POST_KEYWORD) &&
                     n.bounds.centerY() in (h * 0.25f).toInt()..(h * 0.80f).toInt() &&
                     n.bounds.width() > screenWidth() / 2
             }.randomOrNull()
         }
         return candidates.randomOrNull()
+    }
+
+    private fun nodeContainsCommentKeyword(node: ViewNode): Boolean {
+        val text = node.text?.toString().orEmpty()
+        val desc = runCatching { node.desc()?.toString() }.getOrNull().orEmpty()
+        return text.contains(COMMENT_POST_KEYWORD) || desc.contains(COMMENT_POST_KEYWORD)
     }
 
     private suspend fun longPressPostBody(node: ViewNode): Boolean {
