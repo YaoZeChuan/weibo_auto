@@ -75,8 +75,6 @@ interface AccountDao {
             dailyBrowseRequiredCount = :browseRequired,
             dailyCommentCompletedCount = :commentCompleted,
             dailyCommentRequiredCount = :commentRequired,
-            dailyRepostCompletedCount = :repostCompleted,
-            dailyRepostRequiredCount = :repostRequired,
             lastRefreshAt = :at
         WHERE id = :id
         """
@@ -89,10 +87,38 @@ interface AccountDao {
         browseRequired: Int,
         commentCompleted: Int,
         commentRequired: Int,
-        repostCompleted: Int,
-        repostRequired: Int,
         at: Long = System.currentTimeMillis(),
     )
+
+    @Query(
+        """
+        UPDATE weibo_accounts
+        SET dailyWaterPostDayStart = :dayStart,
+            dailyWaterPostCompletedCount = CASE
+                WHEN dailyWaterPostDayStart = :dayStart THEN dailyWaterPostCompletedCount + 1
+                ELSE 1
+            END,
+            lastRefreshAt = :at
+        WHERE id = :id
+        """
+    )
+    suspend fun incrementDailyWaterPostCount(
+        id: Long,
+        dayStart: Long,
+        at: Long = System.currentTimeMillis(),
+    )
+
+    @Query(
+        """
+        SELECT CASE
+            WHEN dailyWaterPostDayStart = :dayStart THEN dailyWaterPostCompletedCount
+            ELSE 0
+        END
+        FROM weibo_accounts
+        WHERE id = :id
+        """
+    )
+    suspend fun getDailyWaterPostCount(id: Long, dayStart: Long): Int?
 
     @Query(
         """

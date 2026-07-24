@@ -1,6 +1,7 @@
 package cn.vove7.weibo.auto.ui.dashboard
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
@@ -50,16 +52,20 @@ private val MuteBg = Color(0xFFF0F0F2)
 private val MuteFg = Color(0xFF6B6B70)
 private val CheckBg = Color(0xFFE8F0FE)
 private val CheckFg = Color(0xFF1565C0)
+private val TaskCompleteGreen = Color(0xFF34A853)
+private val TaskIncompleteRed = Color(0xFFE53935)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AccountCard(
     account: WeiboAccount,
+    waterPostTarget: Int,
     onToggleSelect: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showDailyTaskTip by remember(account.id) { mutableStateOf(false) }
+    val dailyTaskCompletion = account.dailyTaskCompletion(waterPostTarget)
     Card(
         onClick = { showDailyTaskTip = true },
         modifier = modifier.fillMaxWidth(),
@@ -87,21 +93,37 @@ fun AccountCard(
                 ),
                 modifier = Modifier.size(40.dp),
             )
-            Avatar(name = account.name, url = account.avatarUrl)
+            Avatar(
+                name = account.name,
+                url = account.avatarUrl,
+                incompleteTaskCount = dailyTaskCompletion.incompleteCount,
+            )
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 8.dp, end = 2.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                Text(
-                    text = account.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = account.name,
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = when (dailyTaskCompletion.incompleteCount) {
+                            0 -> "😁"
+                            4 -> "😭"
+                            else -> "😅"
+                        },
+                        fontSize = 18.sp,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -109,8 +131,7 @@ fun AccountCard(
                     StatusTag(
                         text = when {
                             account.superLikeExp < 0 -> "超like · —"
-                            account.superLikeLit -> "已点亮 · ${account.superLikeExp}"
-                            else -> "未达标 · ${account.superLikeExp}"
+                            else -> "超L${account.superLikeExp}分"
                         },
                         bg = when {
                             account.superLikeExp < 0 -> MuteBg
@@ -131,12 +152,6 @@ fun AccountCard(
                         bg = if (account.checkInDays < 0) MuteBg else CheckBg,
                         fg = if (account.checkInDays < 0) MuteFg else CheckFg,
                     )
-                    // 当天是否做过检测
-                    StatusTag(
-                        text = if (account.isCheckedToday()) "今日已检测" else "今日未检测",
-                        bg = if (account.isCheckedToday()) LitBg else FailBg,
-                        fg = if (account.isCheckedToday()) LitFg else FailFg,
-                    )
                 }
             }
             IconButton(
@@ -156,14 +171,20 @@ fun AccountCard(
     if (showDailyTaskTip) {
         DailyTaskProgressDialog(
             account = account,
+            waterPostTarget = waterPostTarget,
             onDismiss = { showDailyTaskTip = false },
         )
     }
 }
 
 @Composable
-private fun DailyTaskProgressDialog(account: WeiboAccount, onDismiss: () -> Unit) {
+private fun DailyTaskProgressDialog(
+    account: WeiboAccount,
+    waterPostTarget: Int,
+    onDismiss: () -> Unit,
+) {
     val detected = account.isDailyTaskDetectedToday()
+    val completion = account.dailyTaskCompletion(waterPostTarget)
     val checkIn = when {
         !detected -> "未检测"
         account.dailyCheckInStatus == "COMPLETED" -> "已完成"
@@ -177,8 +198,7 @@ private fun DailyTaskProgressDialog(account: WeiboAccount, onDismiss: () -> Unit
     } else {
         (if (account.dailyCheckInStatus == "COMPLETED") 8 else 0) +
             account.dailyBrowseCompletedCount.coerceAtLeast(0) +
-            account.dailyCommentCompletedCount.coerceAtLeast(0) +
-            account.dailyRepostCompletedCount.coerceAtLeast(0)
+            account.dailyCommentCompletedCount.coerceAtLeast(0)
     }
 
     AlertDialog(
@@ -186,10 +206,24 @@ private fun DailyTaskProgressDialog(account: WeiboAccount, onDismiss: () -> Unit
         title = { Text("${account.name} · 今日任务") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("签到：$checkIn")
-                Text("看帖：今日完成次数 ${progress(account.dailyBrowseCompletedCount, account.dailyBrowseRequiredCount)}")
-                Text("评论：今日完成次数 ${progress(account.dailyCommentCompletedCount, account.dailyCommentRequiredCount)}")
-                Text("转发：今日完成次数 ${progress(account.dailyRepostCompletedCount, account.dailyRepostRequiredCount)}")
+                Text("签到：$checkIn", color = taskProgressColor(completion.checkIn))
+                Text(
+                    "看帖：今日完成次数 ${progress(account.dailyBrowseCompletedCount, account.dailyBrowseRequiredCount)}",
+                    color = taskProgressColor(completion.browse),
+                )
+                Text(
+                    "评论：今日完成次数 ${progress(account.dailyCommentCompletedCount, account.dailyCommentRequiredCount)}",
+                    color = taskProgressColor(completion.comment),
+                )
+                val waterPostCount = if (account.isDailyWaterPostRecordedToday()) {
+                    account.dailyWaterPostCompletedCount
+                } else {
+                    0
+                }
+                Text(
+                    "水贴：今日发帖量 $waterPostCount/$waterPostTarget",
+                    color = taskProgressColor(completion.waterPost),
+                )
                 Text("今日预计经验值：${estimatedScore?.let { "+$it" } ?: "未检测"}")
             }
         },
@@ -219,39 +253,110 @@ private fun StatusTag(
 }
 
 @Composable
-private fun Avatar(name: String, url: String?) {
-    if (!url.isNullOrBlank()) {
-        AsyncImage(
-            model = url,
-            contentDescription = name,
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape),
-            contentScale = ContentScale.Crop,
-        )
-    } else {
+private fun Avatar(
+    name: String,
+    url: String?,
+    incompleteTaskCount: Int,
+) {
+    Box(modifier = Modifier.size(44.dp)) {
+        if (!url.isNullOrBlank()) {
+            AsyncImage(
+                model = url,
+                contentDescription = name,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                val initial = name.firstOrNull()?.toString() ?: "?"
+                if (initial.isNotBlank()) {
+                    Text(
+                        text = initial,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Person,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .align(Alignment.TopEnd)
+                .size(20.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(if (incompleteTaskCount == 0) TaskCompleteGreen else TaskIncompleteRed)
+                .border(1.dp, MaterialTheme.colorScheme.surface, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            val initial = name.firstOrNull()?.toString() ?: "?"
-            if (initial.isNotBlank()) {
-                Text(
-                    text = initial,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+            if (incompleteTaskCount == 0) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "今日任务已完成",
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp),
                 )
             } else {
-                Icon(
-                    Icons.Default.Person,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+                Text(
+                    text = incompleteTaskCount.toString(),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = Color.White,
                 )
             }
         }
     }
+}
+
+private data class DailyTaskCompletion(
+    val checkIn: Boolean,
+    val browse: Boolean,
+    val comment: Boolean,
+    val waterPost: Boolean,
+) {
+    val incompleteCount: Int
+        get() = listOf(checkIn, browse, comment, waterPost).count { !it }
+}
+
+@Composable
+private fun taskProgressColor(completed: Boolean): Color =
+    if (completed) MaterialTheme.colorScheme.onSurface else TaskIncompleteRed
+
+private fun WeiboAccount.dailyTaskCompletion(waterPostTarget: Int): DailyTaskCompletion {
+    val dailyTaskDetected = isDailyTaskDetectedToday()
+    val checkInCompleted = dailyTaskDetected && dailyCheckInStatus == "COMPLETED"
+    val browseCompleted = dailyTaskDetected &&
+        dailyBrowseCompletedCount >= 0 &&
+        dailyBrowseRequiredCount >= 0 &&
+        dailyBrowseCompletedCount >= dailyBrowseRequiredCount
+    val commentCompleted = dailyTaskDetected &&
+        dailyCommentCompletedCount >= 0 &&
+        dailyCommentRequiredCount >= 0 &&
+        dailyCommentCompletedCount >= dailyCommentRequiredCount
+    val waterPostCount = if (isDailyWaterPostRecordedToday()) {
+        dailyWaterPostCompletedCount
+    } else {
+        0
+    }
+    val waterPostCompleted = waterPostCount >= waterPostTarget
+    return DailyTaskCompletion(
+        checkIn = checkInCompleted,
+        browse = browseCompleted,
+        comment = commentCompleted,
+        waterPost = waterPostCompleted,
+    )
 }

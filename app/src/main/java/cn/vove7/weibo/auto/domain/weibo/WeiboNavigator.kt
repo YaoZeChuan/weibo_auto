@@ -27,6 +27,12 @@ import timber.log.Timber
  */
 class WeiboNavigator {
 
+    private enum class PostSendResult {
+        SUCCESS,
+        FAILURE,
+        TIMEOUT,
+    }
+
     data class DailyTaskCounter(
         val completedCount: Int = -1,
         val requiredCount: Int = -1,
@@ -39,7 +45,6 @@ class WeiboNavigator {
         val checkInStatus: String,
         val browse: DailyTaskCounter,
         val comment: DailyTaskCounter,
-        val repost: DailyTaskCounter,
     ) {
         val signInCompleted: Boolean
             get() = checkInStatus == "COMPLETED"
@@ -937,8 +942,7 @@ class WeiboNavigator {
         Timber.tag(TAG).i(
             "dailyTaskProgress signIn=${progress.checkInStatus} " +
                 "browse=${progress.browse.completedCount}/${progress.browse.requiredCount} " +
-                "comment=${progress.comment.completedCount}/${progress.comment.requiredCount} " +
-                "repost=${progress.repost.completedCount}/${progress.repost.requiredCount}"
+                "comment=${progress.comment.completedCount}/${progress.comment.requiredCount}"
         )
         onProgress(
             "每日任务：签到${when (progress.checkInStatus) { "COMPLETED" -> "已完成"; "INCOMPLETE" -> "未完成"; else -> "未检测" }}，" +
@@ -1049,7 +1053,6 @@ class WeiboNavigator {
             },
             browse = rowCounter("看帖"),
             comment = rowCounter("评论帖子"),
-            repost = rowCounter("转发帖子"),
         )
     }
 
@@ -1465,7 +1468,18 @@ class WeiboNavigator {
             dumpLayout("send_post_not_found")
             error("找不到「发送」按钮")
         }
-        delay(1_500)
+        onProgress("检测发帖结果…")
+        when (waitForPostSendResult()) {
+            PostSendResult.SUCCESS -> Unit
+            PostSendResult.FAILURE -> {
+                dumpLayout("post_send_failed")
+                error("微博发送失败")
+            }
+            PostSendResult.TIMEOUT -> {
+                dumpLayout("post_send_result_timeout")
+                error("未检测到「微博发送成功」，本次发帖未计入")
+            }
+        }
         dismissDialogIfAny()
         onProgress("发帖完成")
         logPage("performPost done")
@@ -1655,6 +1669,30 @@ class WeiboNavigator {
             if (sys.isNotEmpty() && tryClickCommunityNode(sys.first(), "send_sys_$label")) return true
         }
         return false
+    }
+
+    /** 点击发送后等待微博短弹窗，只有明确成功才允许任务记录本条发帖。 */
+    private suspend fun waitForPostSendResult(): PostSendResult {
+        val deadline = System.currentTimeMillis() + 3_000L
+        while (System.currentTimeMillis() < deadline) {
+            val messages = dfsFindViewNodes { true }.flatMap { node ->
+                listOfNotNull(
+                    node.text?.toString(),
+                    runCatching { node.desc() }.getOrNull(),
+                )
+            }
+            if (messages.any { it.contains("微博发送成功") }) {
+                Timber.tag(TAG).i("waitForPostSendResult: success")
+                return PostSendResult.SUCCESS
+            }
+            if (messages.any { it.contains("微博发送失败") }) {
+                Timber.tag(TAG).w("waitForPostSendResult: failure")
+                return PostSendResult.FAILURE
+            }
+            delay(200)
+        }
+        Timber.tag(TAG).w("waitForPostSendResult: timeout")
+        return PostSendResult.TIMEOUT
     }
 
     // endregion

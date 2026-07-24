@@ -30,6 +30,7 @@ import timber.log.Timber
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.random.Random
 
 /**
  * 任务执行器：按账号切号，在赵今麦超话内串行执行勾选任务，
@@ -289,7 +290,24 @@ class WeiboTaskRunner(
                         val content = postTemplateRepository.getRandomContent()
                             ?: error("没有预制发帖内容，请先在「发帖模板」中添加")
                         onProgress("$label：水贴 ${index + 1}/$waterPostCount")
-                        navigator.performPost(content) { p -> onProgress("$label：$p") }
+                        val waitSeconds = Random.nextInt(1, 16)
+                        onProgress("$label：随机等待 $waitSeconds 秒后发帖…")
+                        delay(waitSeconds * 1_000L)
+                        if (TaskControlHub.isStopRequested()) {
+                            throw CancellationException("user_stop")
+                        }
+                        performPostWithRecovery(
+                            label = label,
+                            content = content,
+                            onProgress = onProgress,
+                        )
+                        val dailyWaterPostCount = accountRepository.incrementDailyWaterPostCount(account.id)
+                        onProgress(
+                            "$label：水贴进度 $dailyWaterPostCount/$waterPostCount"
+                        )
+                        val staySeconds = Random.nextInt(1, 11)
+                        onProgress("$label：发帖完成，随机停留 $staySeconds 秒…")
+                        delay(staySeconds * 1_000L)
                     }
                     taskRepository.insert(
                         TaskRecord(
@@ -317,6 +335,39 @@ class WeiboTaskRunner(
             // 单任务失败不阻断同账号后续任务
             onProgress("$label：${task.label}失败 ${e.message}")
         }
+    }
+
+    /**
+     * 发帖页面可能因浏览任务结束后的页面状态变化而丢失入口或同步开关。
+     * 这两类错误重新回首页进入目标超话后重试一次，避免直接把本条发帖判定为失败。
+     */
+    private suspend fun performPostWithRecovery(
+        label: String,
+        content: String,
+        onProgress: (String) -> Unit,
+    ) {
+        try {
+            navigator.performPost(content) { p -> onProgress("$label：$p") }
+            return
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (!shouldReopenPostPage(e)) throw e
+            onProgress("$label：发帖页面状态异常，返回微博首页后重试…")
+            navigator.goToWeiboHome(appContext) { p -> onProgress("$label：$p") }
+            navigator.openTargetSuperTopic(
+                topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
+            ) { p -> onProgress("$label：重新进入超话：$p") }
+        }
+
+        onProgress("$label：重新执行发帖…")
+        navigator.performPost(content) { p -> onProgress("$label：$p") }
+    }
+
+    private fun shouldReopenPostPage(error: Exception): Boolean {
+        val message = error.message.orEmpty()
+        return message.contains("找不到发帖入口") ||
+            message.contains("无法确认「同步到微博」已取消勾选")
     }
 
     private suspend fun runBrowsePass(
@@ -384,8 +435,9 @@ class WeiboTaskRunner(
                 "${progress.comment.completedCount}/${progress.comment.requiredCount}"
         )
         onProgress(
-            "$label：转发，今日完成次数 " +
-                "${progress.repost.completedCount}/${progress.repost.requiredCount}"
+            "$label：水贴，今日发帖量 " +
+                "${accountRepository.getDailyWaterPostCount(account.id)}/" +
+                automationSettingsRepository.settings.value.waterPostCount
         )
         return progress
     }

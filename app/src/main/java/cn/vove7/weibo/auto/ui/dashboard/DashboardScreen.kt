@@ -247,6 +247,7 @@ fun DashboardScreen(
                         items(accounts, key = { it.id }) { account ->
                             AccountCard(
                                 account = account,
+                                waterPostTarget = automationSettings.waterPostCount,
                                 onToggleSelect = { viewModel.toggleSelect(account) },
                                 onDelete = { viewModel.deleteAccount(account) },
                             )

@@ -29,9 +29,14 @@ data class WeiboAccount(
     /** 当日评论完成次数和目标；-1 表示未检测。 */
     val dailyCommentCompletedCount: Int = -1,
     val dailyCommentRequiredCount: Int = -1,
-    /** 当日转发完成次数和目标；-1 表示未检测。 */
+    /**
+     * 历史数据库兼容列。转发任务已不再检测、记录或展示，保留字段仅用于兼容 v7 数据库。
+     */
     val dailyRepostCompletedCount: Int = -1,
     val dailyRepostRequiredCount: Int = -1,
+    /** 本地记录的水贴进度所属自然日和成功发帖数量。 */
+    val dailyWaterPostDayStart: Long = 0L,
+    val dailyWaterPostCompletedCount: Int = 0,
     /**
      * 最近一次「超like/日常检测」完成时间戳；0 表示从未检测。
      * UI 用日历日判断「当天是否已检测」。
@@ -54,6 +59,9 @@ data class WeiboAccount(
 
     fun isDailyTaskDetectedToday(now: Long = System.currentTimeMillis()): Boolean =
         dailyTaskDayStart == localDayStartMillis(now)
+
+    fun isDailyWaterPostRecordedToday(now: Long = System.currentTimeMillis()): Boolean =
+        dailyWaterPostDayStart == localDayStartMillis(now)
 
     private fun localDayStartMillis(now: Long): Long = java.util.Calendar.getInstance().run {
         timeInMillis = now

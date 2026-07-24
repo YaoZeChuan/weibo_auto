@@ -56,8 +56,8 @@ class AccountRepository(
                 dailyBrowseRequiredCount = old?.dailyBrowseRequiredCount ?: -1,
                 dailyCommentCompletedCount = old?.dailyCommentCompletedCount ?: -1,
                 dailyCommentRequiredCount = old?.dailyCommentRequiredCount ?: -1,
-                dailyRepostCompletedCount = old?.dailyRepostCompletedCount ?: -1,
-                dailyRepostRequiredCount = old?.dailyRepostRequiredCount ?: -1,
+                dailyWaterPostDayStart = old?.dailyWaterPostDayStart ?: 0L,
+                dailyWaterPostCompletedCount = old?.dailyWaterPostCompletedCount ?: 0,
                 lastCheckAt = old?.lastCheckAt ?: 0L,
                 lastRefreshAt = now,
                 selected = old?.selected ?: false,
@@ -140,12 +140,24 @@ class AccountRepository(
             browseRequired = progress.browse.requiredCount,
             commentCompleted = progress.comment.completedCount,
             commentRequired = progress.comment.requiredCount,
-            repostCompleted = progress.repost.completedCount,
-            repostRequired = progress.repost.requiredCount,
             at = now,
         )
         Timber.i("db updateDailyTaskProgress id=$accountId progress=$progress")
     }
+
+    suspend fun incrementDailyWaterPostCount(
+        accountId: Long,
+        now: Long = System.currentTimeMillis(),
+    ): Int {
+        val dayStart = localDayStartMillis(now)
+        accountDao.incrementDailyWaterPostCount(accountId, dayStart, now)
+        return accountDao.getDailyWaterPostCount(accountId, dayStart) ?: 0
+    }
+
+    suspend fun getDailyWaterPostCount(
+        accountId: Long,
+        now: Long = System.currentTimeMillis(),
+    ): Int = accountDao.getDailyWaterPostCount(accountId, localDayStartMillis(now)) ?: 0
 
     suspend fun applySuperLikeResult(id: Long, lit: Boolean, exp: Int) {
         accountDao.updateSuperLike(id = id, lit = lit, exp = exp)
