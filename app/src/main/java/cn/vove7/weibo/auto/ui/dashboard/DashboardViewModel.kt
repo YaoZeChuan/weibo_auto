@@ -393,9 +393,11 @@ class DashboardViewModel(
             _uiState.update { it.copy(isUpdatingTemplateTexts = true) }
             _events.emit("正在更新文案…")
             try {
-                val update = TemplateTextUpdater.download()
-                postTemplateRepository.replaceAll(update.postTexts)
-                commentTemplateRepository.replaceAll(update.commentTexts)
+                val update = TemplateTextUpdater.download(getApplication())
+                if (!update.unchanged) {
+                    postTemplateRepository.replaceAll(update.postTexts)
+                    commentTemplateRepository.replaceAll(update.commentTexts)
+                }
                 _events.emit(
                     "文案更新完成：发帖 ${update.postTexts.size} 条，评论 ${update.commentTexts.size} 条"
                 )

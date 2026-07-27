@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import cn.vove7.weibo.auto.ui.dashboard.DashboardScreen
 import cn.vove7.weibo.auto.ui.dashboard.DashboardViewModel
 import cn.vove7.weibo.auto.ui.theme.WeiboAutoTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -34,5 +35,14 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         viewModel.refreshAccessibilityState()
         viewModel.resumePendingUpdateInstallation()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        (application as WeiboApp).let { app ->
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                runCatching { app.appReporter.enqueueHeartbeat("APP_FOREGROUND", app.accountRepository.getAllAccounts().size) }
+            }
+        }
     }
 }

@@ -11,6 +11,7 @@ import cn.vove7.weibo.auto.data.repo.CommentTemplateRepository
 import cn.vove7.weibo.auto.data.repo.PostTemplateRepository
 import cn.vove7.weibo.auto.data.repo.TaskRepository
 import cn.vove7.weibo.auto.data.repo.TaskExecutionLogRepository
+import cn.vove7.weibo.auto.data.reporting.AppReporter
 import cn.vove7.weibo.auto.domain.task.TaskRunner
 import cn.vove7.weibo.auto.domain.task.WeiboTaskRunner
 import cn.vove7.weibo.auto.domain.weibo.WeiboAccountDiscovery
@@ -44,6 +45,8 @@ class WeiboApp : Application() {
         private set
     lateinit var taskRunner: TaskRunner
         private set
+    lateinit var appReporter: AppReporter
+        private set
     lateinit var taskOverlay: TaskOverlayController
         private set
 
@@ -58,10 +61,12 @@ class WeiboApp : Application() {
         taskOverlay = TaskOverlayController(this)
 
         database = AppDatabase.getInstance(this)
+        appReporter = AppReporter(this, database.reportOutboxDao())
         accountRepository = AccountRepository(
             appContext = this,
             accountDao = database.accountDao(),
             discovery = WeiboAccountDiscovery(),
+            onSnapshot = { accounts -> appReporter.enqueueAccountSnapshot(accounts, isComplete = true) },
         )
         taskRepository = TaskRepository(database.taskRecordDao())
         taskExecutionLogRepository = TaskExecutionLogRepository(database.taskExecutionLogDao())
@@ -76,10 +81,12 @@ class WeiboApp : Application() {
             commentTemplateRepository = commentTemplateRepository,
             automationSettingsRepository = automationSettingsRepository,
             taskExecutionLogRepository = taskExecutionLogRepository,
+            appReporter = appReporter,
         )
         appScope.launch {
             runCatching { postTemplateRepository.ensureDefault() }
             runCatching { commentTemplateRepository.ensureDefault() }
+            runCatching { appReporter.enqueueHeartbeat("PROCESS_START", accountRepository.getAllAccounts().size) }
         }
 
         AccessibilityApi.init(this, WeiboAccessibilityService::class.java)

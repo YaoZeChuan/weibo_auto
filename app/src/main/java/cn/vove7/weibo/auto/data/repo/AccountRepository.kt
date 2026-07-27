@@ -15,6 +15,7 @@ class AccountRepository(
     private val accountDao: AccountDao,
     private val discovery: WeiboAccountDiscovery = WeiboAccountDiscovery(),
     private val superLikeChecker: SuperLikeChecker = SuperLikeChecker(),
+    private val onSnapshot: suspend (List<WeiboAccount>) -> Unit = {},
 ) {
     fun observeAccounts(): Flow<List<WeiboAccount>> = accountDao.observeAll()
 
@@ -29,6 +30,7 @@ class AccountRepository(
         val discovered = discovery.discover(appContext, onProgress)
         onProgress("正在保存到本地…")
         syncDiscovered(discovered)
+        onSnapshot(accountDao.getAll())
     }
 
     /**

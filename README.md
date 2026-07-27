@@ -99,6 +99,14 @@ uiauto/          # UIAutomator 相关辅助
 - 首次启动时，若本地没有模板，会写入默认文案
 - 任务执行依赖微博页面结构，真机上可能需要根据版本微调
 
+## 后台管理系统（方案）
+
+规划中的运营后台（设备统计、任务监控、文案管理）设计见：
+
+- [docs/admin-backend-design.md](docs/admin-backend-design.md)
+
+技术栈意向：NestJS + Vue 3 + Element Plus + PostgreSQL；App 侧无登录，启动上报设备信息，仅做统计不限制使用。
+
 ## 许可证
 
 见 [LICENSE](LICENSE)

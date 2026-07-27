@@ -14,6 +14,7 @@ import cn.vove7.weibo.auto.data.repo.CommentTemplateRepository
 import cn.vove7.weibo.auto.data.repo.PostTemplateRepository
 import cn.vove7.weibo.auto.data.repo.TaskRepository
 import cn.vove7.weibo.auto.data.repo.TaskExecutionLogRepository
+import cn.vove7.weibo.auto.data.reporting.AppReporter
 import cn.vove7.weibo.auto.domain.model.TaskType
 import cn.vove7.weibo.auto.domain.weibo.SuperLikeChecker
 import cn.vove7.weibo.auto.domain.weibo.WeiboAppController
@@ -52,6 +53,7 @@ class WeiboTaskRunner(
     private val commentTemplateRepository: CommentTemplateRepository,
     private val automationSettingsRepository: AutomationSettingsRepository,
     private val taskExecutionLogRepository: TaskExecutionLogRepository,
+    private val appReporter: AppReporter,
     private val navigator: WeiboNavigator = WeiboNavigator(),
     private val superLikeChecker: SuperLikeChecker = SuperLikeChecker(),
 ) : TaskRunner {
@@ -79,6 +81,7 @@ class WeiboTaskRunner(
             accountsSummary = accounts.joinToString { it.name },
             tasksSummary = ordered.joinToString { it.label },
         )
+        val taskStartedAt = System.currentTimeMillis()
         Timber.tag(TAG).i(
             "run accounts=${accounts.map { it.name }} tasks=${ordered.map { it.name }}"
         )
@@ -190,6 +193,20 @@ class WeiboTaskRunner(
                     append("执行结果：$finalDetail")
                 }
                 taskExecutionLogRepository.finish(executionLogId, finalResult, detail)
+                runCatching {
+                    appReporter.enqueueTaskRun(
+                        startedAt = taskStartedAt,
+                        completedAt = System.currentTimeMillis(),
+                        accountsSummary = accounts.joinToString { it.name },
+                        tasksSummary = ordered.joinToString { it.label },
+                        result = finalResult,
+                        detail = detail,
+                        accountCount = accounts.size,
+                        failedAccountCount = failedAccounts,
+                    )
+                    appReporter.enqueueAccountSnapshot(accountRepository.getAllAccounts(), isComplete = true)
+                    appReporter.enqueueHeartbeat("TASK_RUN", accountRepository.getAllAccounts().size)
+                }.onFailure { Timber.tag(TAG).w(it, "failed to enqueue reports") }
             }
             if (opened) {
                 runCatching {
