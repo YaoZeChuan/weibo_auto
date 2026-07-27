@@ -82,6 +82,13 @@ object WeiboConsts {
     const val POST_SYNC_CHECKBOX_FULL = "com.sina.weibo:id/checkbox"
 
     /**
+     * 超话详情底栏的发帖输入区域容器。新版微博不再提供固定的「我来发一帖」文案，
+     * 应点击该容器内左侧的输入区域。
+     */
+    const val SUPER_TOPIC_FOOTER_MENU_VIEW = "footerMenuView"
+    const val SUPER_TOPIC_FOOTER_MENU_VIEW_FULL = "com.sina.weibo:id/footerMenuView"
+
+    /**
      * 超话详情右上角签到容器（dump 实测）：
      * FrameLayout id=right_button → Button text=签到
      */

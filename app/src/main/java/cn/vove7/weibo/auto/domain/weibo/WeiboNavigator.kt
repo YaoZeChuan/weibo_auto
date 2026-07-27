@@ -1396,7 +1396,7 @@ class WeiboNavigator {
     }
 
     /**
-     * 超话发帖：我来发一帖 → 填文案 → 关闭「同步到微博」→ 发送。
+     * 超话发帖：点击底栏输入区域 → 填文案 → 关闭「同步到微博」→ 发送。
      */
     suspend fun performPost(
         content: String,
@@ -1404,29 +1404,32 @@ class WeiboNavigator {
     ) = withContext(Dispatchers.Default) {
         Timber.tag(TAG).i("==== performPost len=${content.length} ====")
         require(content.isNotBlank()) { "发帖内容为空" }
-        onProgress("点击「我来发一帖」…")
-        val composeLabels = listOf("我来发一帖", "发帖", "说点什么", "写帖子")
-        var opened = false
-        for (label in composeLabels) {
-            val nodes = dfsFindViewNodes { n ->
-                n.text?.toString()?.contains(label) == true ||
-                    n.desc()?.contains(label) == true
-            }
-            Timber.tag(TAG).d("performPost compose label=$label count=${nodes.size}")
-            val n = nodes.firstOrNull()
-            if (n != null && tryClickCommunityNode(n, "compose_$label")) {
-                opened = true
-                break
-            }
-            val sys = findBySystemText(label)
-            if (sys.isNotEmpty() && tryClickCommunityNode(sys.first(), "compose_sys_$label")) {
-                opened = true
-                break
+        onProgress("点击左下角发帖输入框…")
+        var opened = clickSuperTopicComposeInput()
+        // 兼容旧版微博仍显示固定发帖文案的界面。
+        if (!opened) {
+            val composeLabels = listOf("我来发一帖", "发帖", "说点什么", "写帖子")
+            for (label in composeLabels) {
+                val nodes = dfsFindViewNodes { n ->
+                    n.text?.toString()?.contains(label) == true ||
+                        n.desc()?.contains(label) == true
+                }
+                Timber.tag(TAG).d("performPost compose label=$label count=${nodes.size}")
+                val n = nodes.firstOrNull()
+                if (n != null && tryClickCommunityNode(n, "compose_$label")) {
+                    opened = true
+                    break
+                }
+                val sys = findBySystemText(label)
+                if (sys.isNotEmpty() && tryClickCommunityNode(sys.first(), "compose_sys_$label")) {
+                    opened = true
+                    break
+                }
             }
         }
         if (!opened) {
             dumpLayout("compose_entry_not_found")
-            error("找不到发帖入口「我来发一帖」")
+            error("找不到左下角发帖输入框")
         }
         delay(1_500)
 
@@ -1483,6 +1486,27 @@ class WeiboNavigator {
         dismissDialogIfAny()
         onProgress("发帖完成")
         logPage("performPost done")
+    }
+
+    /** 新版超话底栏中，左侧的大型可点击区域即发帖输入框。 */
+    private suspend fun clickSuperTopicComposeInput(): Boolean {
+        val footer = findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW_FULL)
+            .ifEmpty { findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW) }
+            .firstOrNull()
+            ?: dfsFindViewNodes { idShort(it) == WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW }
+                .firstOrNull()
+            ?: return false
+        val footerBounds = footer.bounds
+        val input = dfsFindViewNodes { node ->
+            val bounds = node.bounds
+            node.isClickable() &&
+                bounds.left >= footerBounds.left && bounds.right <= footerBounds.right &&
+                bounds.top >= footerBounds.top && bounds.bottom <= footerBounds.bottom &&
+                bounds.centerX() < footerBounds.centerX()
+        }.maxByOrNull { it.bounds.width() }
+            ?: return false
+        Timber.tag(TAG).i("clickSuperTopicComposeInput: ${describeNode(input)}")
+        return tryClickCommunityNode(input, "compose_footer_input")
     }
 
     /**
