@@ -60,6 +60,7 @@ class WeiboTaskRunner(
         private const val TAG = "WeiboTaskRunner"
         private const val BROWSE_SWIPES_PER_DAILY_GROUP = 10
         private const val MAX_BROWSE_SUPPLEMENT_ROUNDS = 3
+        private const val MAX_TASK_RECOVERY_ATTEMPTS = 3
     }
 
     override suspend fun run(
@@ -229,7 +230,7 @@ class WeiboTaskRunner(
                 TaskType.BROWSE -> {
                     val hasCommentTemplate = commentTemplateRepository.getAll().isNotEmpty()
                     val settings = automationSettingsRepository.settings.value
-                    runBrowsePass(
+                    runBrowsePassWithRecovery(
                         account = account,
                         label = label,
                         swipeCount = settings.browseSwipeCount,
@@ -258,7 +259,7 @@ class WeiboTaskRunner(
                         onProgress(
                             "$label：看帖还差 $missingGroups 组，补滑 $supplementSwipes 次后继续检测"
                         )
-                        runBrowsePass(
+                        runBrowsePassWithRecovery(
                             account = account,
                             label = label,
                             swipeCount = supplementSwipes,
@@ -286,10 +287,15 @@ class WeiboTaskRunner(
                 }
                 TaskType.POST -> {
                     val waterPostCount = automationSettingsRepository.settings.value.waterPostCount
-                    repeat(waterPostCount) { index ->
+                    var dailyWaterPostCount = accountRepository.getDailyWaterPostCount(account.id)
+                    val remainingPosts = (waterPostCount - dailyWaterPostCount).coerceAtLeast(0)
+                    if (remainingPosts == 0) {
+                        onProgress("$label：水贴已完成 $dailyWaterPostCount/$waterPostCount")
+                    }
+                    repeat(remainingPosts) {
                         val content = postTemplateRepository.getRandomContent()
                             ?: error("没有预制发帖内容，请先在「发帖模板」中添加")
-                        onProgress("$label：水贴 ${index + 1}/$waterPostCount")
+                        onProgress("$label：水贴 ${dailyWaterPostCount + 1}/$waterPostCount")
                         val waitSeconds = Random.nextInt(1, 16)
                         onProgress("$label：随机等待 $waitSeconds 秒后发帖…")
                         delay(waitSeconds * 1_000L)
@@ -301,7 +307,7 @@ class WeiboTaskRunner(
                             content = content,
                             onProgress = onProgress,
                         )
-                        val dailyWaterPostCount = accountRepository.incrementDailyWaterPostCount(account.id)
+                        dailyWaterPostCount = accountRepository.incrementDailyWaterPostCount(account.id)
                         onProgress(
                             "$label：水贴进度 $dailyWaterPostCount/$waterPostCount"
                         )
@@ -337,37 +343,83 @@ class WeiboTaskRunner(
         }
     }
 
-    /**
-     * 发帖页面可能因浏览任务结束后的页面状态变化而丢失入口或同步开关。
-     * 这两类错误重新回首页进入目标超话后重试一次，避免直接把本条发帖判定为失败。
-     */
+    /** 发帖失败后回首页重进超话，继续当前尚未完成的水帖。 */
     private suspend fun performPostWithRecovery(
         label: String,
         content: String,
         onProgress: (String) -> Unit,
     ) {
-        try {
-            navigator.performPost(content) { p -> onProgress("$label：$p") }
-            return
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (!shouldReopenPostPage(e)) throw e
-            onProgress("$label：发帖页面状态异常，返回微博首页后重试…")
-            navigator.goToWeiboHome(appContext) { p -> onProgress("$label：$p") }
-            navigator.openTargetSuperTopic(
-                topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
-            ) { p -> onProgress("$label：重新进入超话：$p") }
+        var lastError: Exception? = null
+        repeat(MAX_TASK_RECOVERY_ATTEMPTS) { attempt ->
+            try {
+                navigator.performPost(content) { p -> onProgress("$label：$p") }
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt == MAX_TASK_RECOVERY_ATTEMPTS - 1) return@repeat
+                onProgress(
+                    "$label：发帖失败（${e.message ?: e.javaClass.simpleName}），" +
+                        "返回首页重进超话后重试 ${attempt + 2}/$MAX_TASK_RECOVERY_ATTEMPTS…"
+                )
+                recoverTargetSuperTopic(label, onProgress)
+            }
         }
-
-        onProgress("$label：重新执行发帖…")
-        navigator.performPost(content) { p -> onProgress("$label：$p") }
+        throw lastError ?: IllegalStateException("发帖失败")
     }
 
-    private fun shouldReopenPostPage(error: Exception): Boolean {
-        val message = error.message.orEmpty()
-        return message.contains("找不到发帖入口") ||
-            message.contains("无法确认「同步到微博」已取消勾选")
+    private suspend fun recoverTargetSuperTopic(
+        label: String,
+        onProgress: (String) -> Unit,
+    ) {
+        onProgress("$label：返回微博首页…")
+        navigator.goToWeiboHome(appContext) { p -> onProgress("$label：$p") }
+        navigator.openTargetSuperTopic(
+            topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
+        ) { p -> onProgress("$label：重新进入超话：$p") }
+    }
+
+    /** 浏览中断后，根据重新进入超话后读取到的任务进度继续补滑。 */
+    private suspend fun runBrowsePassWithRecovery(
+        account: WeiboAccount,
+        label: String,
+        swipeCount: Int,
+        settings: AutomationSettings,
+        onProgress: (String) -> Unit,
+    ) {
+        var plannedSwipes = swipeCount
+        var lastError: Exception? = null
+        repeat(MAX_TASK_RECOVERY_ATTEMPTS) { attempt ->
+            try {
+                runBrowsePass(account, label, plannedSwipes, settings, onProgress)
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                if (attempt == MAX_TASK_RECOVERY_ATTEMPTS - 1) return@repeat
+                onProgress(
+                    "$label：浏览失败（${e.message ?: e.javaClass.simpleName}），" +
+                        "返回首页重进超话后继续 ${attempt + 2}/$MAX_TASK_RECOVERY_ATTEMPTS…"
+                )
+                recoverTargetSuperTopic(label, onProgress)
+                val progress = runCatching {
+                    inspectAndRecordDailyTaskProgress(account, label, onProgress)
+                }.getOrNull()
+                val missingGroups = progress?.missingBrowseGroupCount()
+                plannedSwipes = when {
+                    missingGroups == null -> swipeCount
+                    missingGroups == 0 -> {
+                        onProgress("$label：重新读取后看帖任务已完成")
+                        return
+                    }
+                    else -> missingGroups * BROWSE_SWIPES_PER_DAILY_GROUP
+                }
+                onProgress("$label：按当前进度继续浏览 $plannedSwipes 次")
+            }
+        }
+        throw lastError ?: IllegalStateException("浏览失败")
     }
 
     private suspend fun runBrowsePass(

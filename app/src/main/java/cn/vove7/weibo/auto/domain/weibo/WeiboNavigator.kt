@@ -1131,8 +1131,9 @@ class WeiboNavigator {
             findBySystemText(marker).isNotEmpty()
         ) return true
 
-        // 部分版本的超话页面不会暴露稳定的标题节点，但页面内容同时包含发帖入口和话题名。
-        // 这两个文案组合出现时，可确认仍在目标超话内部，避免误返回首页重进。
+        // 部分版本的超话页面不会暴露「赵今麦超话」这个完整标题：
+        // 头图区只显示「赵今麦」，而新版底栏的输入区也不再显示固定发帖文案。
+        // 因此需结合顶部话题名与超话专属 Tab 判断，避免在仍位于超话时错误返回首页重进。
         val pageTexts = dfsFindViewNodes { true }.flatMap { node ->
             listOfNotNull(
                 node.text?.toString()?.trim(),
@@ -1144,9 +1145,29 @@ class WeiboNavigator {
         val hasTopicName = pageTexts.any {
             it.contains(topicName) || it.contains("赵今麦")
         }
-        if (hasTopicMarker || (hasPostEntry && hasTopicName)) {
+        val hasTopTopicName = dfsFindViewNodes { node ->
+            val text = node.text?.toString()?.trim()
+                ?: runCatching { node.desc()?.trim() }.getOrNull()
+            text == topicName && node.bounds.centerY() < (screenHeight() * 0.35f).toInt()
+        }.isNotEmpty()
+        val hasSuperTopicTabs = listOf("详情", "热门", "最新").all { tab ->
+            pageTexts.any { it.trim() == tab }
+        } && listOf("名人动态", "超友趣", "追星纪念册").any { tab ->
+            pageTexts.any { it.trim() == tab }
+        }
+        val hasComposeFooter = findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW_FULL)
+            .ifEmpty { findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW) }
+            .isNotEmpty() || dfsFindViewNodes {
+            idShort(it) == WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW
+        }.isNotEmpty()
+        if (hasTopicMarker ||
+            (hasTopTopicName && hasSuperTopicTabs) ||
+            (hasTopicName && hasSuperTopicTabs && hasComposeFooter) ||
+            (hasPostEntry && hasTopicName)
+        ) {
             Timber.tag(TAG).i(
-                "isOnTargetSuperTopicPage: matched topic marker or post entry + topic name fallback"
+                "isOnTargetSuperTopicPage: matched target title or super-topic chrome " +
+                    "(topName=$hasTopTopicName tabs=$hasSuperTopicTabs footer=$hasComposeFooter)"
             )
             return true
         }
@@ -1490,23 +1511,38 @@ class WeiboNavigator {
 
     /** 新版超话底栏中，左侧的大型可点击区域即发帖输入框。 */
     private suspend fun clickSuperTopicComposeInput(): Boolean {
-        val footer = findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW_FULL)
-            .ifEmpty { findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW) }
-            .firstOrNull()
-            ?: dfsFindViewNodes { idShort(it) == WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW }
+        val deadline = System.currentTimeMillis() + 4_000
+        while (System.currentTimeMillis() < deadline) {
+            if (isPostComposerVisible()) return true
+            val footer = findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW_FULL)
+                .ifEmpty { findBySystemViewId(WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW) }
                 .firstOrNull()
-            ?: return false
-        val footerBounds = footer.bounds
-        val input = dfsFindViewNodes { node ->
-            val bounds = node.bounds
-            node.isClickable() &&
-                bounds.left >= footerBounds.left && bounds.right <= footerBounds.right &&
-                bounds.top >= footerBounds.top && bounds.bottom <= footerBounds.bottom &&
-                bounds.centerX() < footerBounds.centerX()
-        }.maxByOrNull { it.bounds.width() }
-            ?: return false
-        Timber.tag(TAG).i("clickSuperTopicComposeInput: ${describeNode(input)}")
-        return tryClickCommunityNode(input, "compose_footer_input")
+                ?: dfsFindViewNodes { idShort(it) == WeiboConsts.SUPER_TOPIC_FOOTER_MENU_VIEW }
+                    .firstOrNull()
+            // footerMenuView 的第一个子布局内第一个可点击 ViewGroup 是左下角输入区。
+            // 部分版本会短暂回报 0x0 或倒置 bounds，不能按坐标筛选或 globalClick。
+            val input = footer?.children?.firstOrNull()?.children
+                ?.firstOrNull { it?.isClickable() == true }
+            if (input != null) {
+                Timber.tag(TAG).i("clickSuperTopicComposeInput: action click ${describeNode(input)}")
+                if (runCatching { input.click() }.getOrDefault(false)) {
+                    delay(400)
+                    if (isPostComposerVisible()) return true
+                }
+            }
+            delay(300)
+        }
+        return isPostComposerVisible()
+    }
+
+    private fun isPostComposerVisible(): Boolean {
+        val editorVisible = findBySystemViewId("com.sina.weibo:id/edit_view")
+            .ifEmpty { findBySystemViewId("edit_view") }
+            .isNotEmpty()
+        val sendVisible = findBySystemViewId("com.sina.weibo:id/titleSave")
+            .ifEmpty { findBySystemViewId("titleSave") }
+            .any { it.text?.toString()?.trim() == "发送" }
+        return editorVisible && sendVisible
     }
 
     /**
@@ -1518,8 +1554,10 @@ class WeiboNavigator {
         var swipeCount = 0
         while (System.currentTimeMillis() < deadline) {
             val target = dfsFindViewNodes { node ->
-                node.text?.toString()?.trim() == "水帖" ||
-                    runCatching { node.desc()?.trim() == "水帖" }.getOrDefault(false)
+                node.text?.toString()?.trim()?.let { it == "水帖" || it == "水帖版块" } == true ||
+                    runCatching {
+                        node.desc()?.trim()?.let { it == "水帖" || it == "水帖版块" } == true
+                    }.getOrDefault(false)
             }.firstOrNull()
                 ?: findBySystemText("水帖").firstOrNull()
             if (target != null) {
@@ -1533,17 +1571,18 @@ class WeiboNavigator {
             val sectionList = findBySystemViewId("com.sina.weibo:id/section_rv")
                 .ifEmpty { findBySystemViewId("section_rv") }
                 .firstOrNull()
+                ?: dfsFindViewNodes { idShort(it) == "section_rv" }.firstOrNull()
             if (sectionList == null) {
                 delay(300)
                 continue
             }
             val bounds = sectionList.bounds
             val y = bounds.centerY()
-            // 每次仅移动一小段，避免越过目标板块。
-            val startX = (bounds.left + bounds.width() * 0.78f).toInt()
-            val endX = (bounds.left + bounds.width() * 0.60f).toInt()
+            // 「水帖版块」位于横向 RecyclerView 的右侧，需从右向左滑动让节点露出。
+            val startX = (bounds.left + bounds.width() * 0.90f).toInt()
+            val endX = (bounds.left + bounds.width() * 0.25f).toInt()
             Timber.tag(TAG).i(
-                "selectWaterPostSection: slow swipe#$swipeCount ($startX,$y)->($endX,$y)"
+                "selectWaterPostSection: swipe#$swipeCount ($startX,$y)->($endX,$y)"
             )
             runCatching {
                 cn.vove7.auto.core.api.swipe(startX, y, endX, y, 700)

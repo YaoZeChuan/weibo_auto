@@ -1,10 +1,15 @@
 package cn.vove7.weibo.auto.ui.dashboard
 
+import android.content.Context
+import android.content.ClipData
+import android.content.Intent
+import androidx.core.content.FileProvider
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
@@ -30,6 +36,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,6 +48,10 @@ import cn.vove7.weibo.auto.data.entity.TaskExecutionResult
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun TaskLogsScreen(
@@ -150,7 +162,21 @@ private fun TaskLogCard(log: TaskExecutionLog, onClick: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TaskLogDetailScreen(log: TaskExecutionLog, onBack: () -> Unit) {
-    Scaffold(topBar = { LogTopBar(title = "日志详情", onBack = onBack) }) { padding ->
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Scaffold(
+        topBar = {
+            LogTopBar(
+                title = "日志详情",
+                onBack = onBack,
+                actions = {
+                    IconButton(onClick = { scope.launch { shareTaskLogFile(context, log) } }) {
+                        Icon(Icons.Default.Share, contentDescription = "分享日志")
+                    }
+                },
+            )
+        },
+    ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -185,7 +211,11 @@ private fun TaskLogDetailScreen(log: TaskExecutionLog, onBack: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LogTopBar(title: String, onBack: () -> Unit) {
+private fun LogTopBar(
+    title: String,
+    onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
     TopAppBar(
         title = { Text(title, fontWeight = FontWeight.Bold) },
         navigationIcon = {
@@ -193,11 +223,44 @@ private fun LogTopBar(title: String, onBack: () -> Unit) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
         },
+        actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.background,
             titleContentColor = MaterialTheme.colorScheme.onBackground,
         ),
     )
+}
+
+private suspend fun shareTaskLogFile(context: Context, log: TaskExecutionLog) {
+    val content = buildString {
+        appendLine("小麦助手任务日志")
+        appendLine("执行结果：${resultLabel(log.result)}")
+        appendLine("启动时间：${formatLogTime(log.startedAt)}")
+        appendLine("完成时间：${log.completedAt?.let(::formatLogTime) ?: "进行中"}")
+        appendLine("执行账号：${log.accountsSummary}")
+        appendLine("任务内容：${log.tasksSummary}")
+        appendLine()
+        append(log.detail ?: resultLabel(log.result))
+    }
+    val file = withContext(Dispatchers.IO) {
+        val directory = File(context.cacheDir, "shared_task_logs").apply { mkdirs() }
+        File(directory, "task-log-${log.id}-${log.startedAt}.txt").apply {
+            writeText(content, Charsets.UTF_8)
+        }
+    }
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file,
+    )
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, "小麦助手任务日志")
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newRawUri("任务日志", uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "分享任务日志"))
 }
 
 @Composable
