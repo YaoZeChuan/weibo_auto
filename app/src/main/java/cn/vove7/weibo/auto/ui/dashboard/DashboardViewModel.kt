@@ -342,6 +342,17 @@ class DashboardViewModel(
         }
     }
 
+    fun toggleStrongVerified(account: WeiboAccount) {
+        viewModelScope.launch {
+            val strongVerified = !account.strongVerified
+            accountRepository.setStrongVerified(account.id, strongVerified)
+            _events.emit(
+                if (strongVerified) "已标记 ${account.name} 为强实名账号，将跳过发帖和评论"
+                else "已取消 ${account.name} 的强实名标记"
+            )
+        }
+    }
+
     fun deleteAccount(account: WeiboAccount) {
         viewModelScope.launch {
             accountRepository.deleteAccount(account.id)
@@ -575,7 +586,7 @@ class DashboardViewModel(
         }
         val selected = accounts.value.filter { it.selected }
         // 含发帖时预检模板
-        if (TaskType.POST in tasks) {
+        if (TaskType.POST in tasks && selected.any { !it.strongVerified }) {
             viewModelScope.launch {
                 val content = postTemplateRepository.getRandomContent()
                 if (content.isNullOrBlank()) {

@@ -25,7 +25,7 @@ import cn.vove7.weibo.auto.data.entity.WeiboAccount
         CommentTemplate::class,
         TaskExecutionLog::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,7 +45,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "weibo_auto.db",
-                ).addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                ).addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { instance = it }
@@ -84,6 +84,14 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyWaterPostDayStart` INTEGER NOT NULL DEFAULT 0")
                 database.execSQL("ALTER TABLE `weibo_accounts` ADD COLUMN `dailyWaterPostCompletedCount` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `weibo_accounts` ADD COLUMN `strongVerified` INTEGER NOT NULL DEFAULT 0"
+                )
             }
         }
     }

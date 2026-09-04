@@ -18,8 +18,8 @@ android {
         applicationId "cn.vove7.weibo.auto"
         minSdk 24
         targetSdk 36
-        versionCode 6
-        versionName "1.4.10"
+        versionCode 7
+        versionName "1.4.11"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }

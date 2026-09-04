@@ -104,8 +104,22 @@ class WeiboTaskRunner(
                     throw CancellationException("user_stop")
                 }
                 val label = "[${index + 1}/${accounts.size}] ${account.name}"
+                val runnableTasks = ordered.filterNot {
+                    account.strongVerified && it == TaskType.POST
+                }
                 Timber.tag(TAG).i("---- $label begin ----")
                 try {
+                    if (account.strongVerified && TaskType.POST in ordered) {
+                        report("$label：强实名账号，跳过发帖任务")
+                        taskRepository.insert(
+                            TaskRecord(
+                                accountId = account.id,
+                                taskType = TaskType.POST.name,
+                                status = TaskStatus.SKIPPED,
+                                message = "强实名账号，跳过发帖",
+                            )
+                        )
+                    }
                     report("$label：进入账号管理切号…")
                     navigator.goToAccountManage { p -> report("$label：$p") }
                     navigator.switchToAccount(account.name)
@@ -114,7 +128,7 @@ class WeiboTaskRunner(
                     runCatching { navigator.waitWeiboReady(5_000) }
 
                     // 浏览/发帖：先进入超话；未签到会在 openTargetSuperTopic 内自动签到
-                    if (ordered.any { it == TaskType.BROWSE || it == TaskType.POST }) {
+                    if (runnableTasks.any { it == TaskType.BROWSE || it == TaskType.POST }) {
                         report("$label：进入超话「${WeiboConsts.TARGET_SUPER_TOPIC_NAME}」…")
                         runCatching {
                             navigator.goToWeiboHome(appContext) { p -> report("$label：$p") }
@@ -128,7 +142,7 @@ class WeiboTaskRunner(
                         }
                     }
 
-                    for (task in ordered) {
+                    for (task in runnableTasks) {
                         ensureActive()
                         if (TaskControlHub.isStopRequested()) {
                             throw CancellationException("user_stop")
@@ -436,9 +450,9 @@ class WeiboTaskRunner(
             topicName = WeiboConsts.TARGET_SUPER_TOPIC_NAME,
             maxSwipeCount = swipeCount,
             stayMs = settings.browseStaySeconds * 1_000L,
-            nextCommentText = commentTemplateRepository::getRandomContent,
+            nextCommentText = if (account.strongVerified) ({ null }) else commentTemplateRepository::getRandomContent,
             existingCommentCount = existingCommentCount,
-            maxDailyCommentCount = settings.dailyCommentLimit,
+            maxDailyCommentCount = if (account.strongVerified) 0 else settings.dailyCommentLimit,
             onCommentSent = { dailyCount ->
                 taskRepository.insert(
                     TaskRecord(

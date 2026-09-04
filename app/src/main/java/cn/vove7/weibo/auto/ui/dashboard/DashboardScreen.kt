@@ -249,6 +249,7 @@ fun DashboardScreen(
                                 account = account,
                                 waterPostTarget = automationSettings.waterPostCount,
                                 onToggleSelect = { viewModel.toggleSelect(account) },
+                                onToggleStrongVerified = { viewModel.toggleStrongVerified(account) },
                                 onDelete = { viewModel.deleteAccount(account) },
                             )
                         }

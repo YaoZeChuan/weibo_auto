@@ -61,6 +61,7 @@ fun AccountCard(
     account: WeiboAccount,
     waterPostTarget: Int,
     onToggleSelect: () -> Unit,
+    onToggleStrongVerified: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -114,6 +115,13 @@ fun AccountCard(
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                    if (account.strongVerified) {
+                        StatusTag(
+                            text = "强实名",
+                            bg = TaskIncompleteRed,
+                            fg = Color.White,
+                        )
+                    }
                     Text(
                         text = when (dailyTaskCompletion.incompleteCount) {
                             0 -> "😁"
@@ -172,6 +180,7 @@ fun AccountCard(
         DailyTaskProgressDialog(
             account = account,
             waterPostTarget = waterPostTarget,
+            onToggleStrongVerified = onToggleStrongVerified,
             onDismiss = { showDailyTaskTip = false },
         )
     }
@@ -181,6 +190,7 @@ fun AccountCard(
 private fun DailyTaskProgressDialog(
     account: WeiboAccount,
     waterPostTarget: Int,
+    onToggleStrongVerified: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val detected = account.isDailyTaskDetectedToday()
@@ -211,24 +221,37 @@ private fun DailyTaskProgressDialog(
                     "看帖：今日完成次数 ${progress(account.dailyBrowseCompletedCount, account.dailyBrowseRequiredCount)}",
                     color = taskProgressColor(completion.browse),
                 )
-                Text(
-                    "评论：今日完成次数 ${progress(account.dailyCommentCompletedCount, account.dailyCommentRequiredCount)}",
-                    color = taskProgressColor(completion.comment),
-                )
+                if (account.strongVerified) {
+                    Text("评论：强实名账号，已跳过", color = MuteFg)
+                } else {
+                    Text(
+                        "评论：今日完成次数 ${progress(account.dailyCommentCompletedCount, account.dailyCommentRequiredCount)}",
+                        color = taskProgressColor(completion.comment),
+                    )
+                }
                 val waterPostCount = if (account.isDailyWaterPostRecordedToday()) {
                     account.dailyWaterPostCompletedCount
                 } else {
                     0
                 }
-                Text(
-                    "水贴：今日发帖量 $waterPostCount/$waterPostTarget",
-                    color = taskProgressColor(completion.waterPost),
-                )
+                if (account.strongVerified) {
+                    Text("水贴：强实名账号，已跳过", color = MuteFg)
+                } else {
+                    Text(
+                        "水贴：今日发帖量 $waterPostCount/$waterPostTarget",
+                        color = taskProgressColor(completion.waterPost),
+                    )
+                }
                 Text("今日预计经验值：${estimatedScore?.let { "+$it" } ?: "未检测"}")
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+        dismissButton = {
+            TextButton(onClick = onToggleStrongVerified) {
+                Text(if (account.strongVerified) "取消强实名账号" else "设置强实名账号")
+            }
         },
     )
 }
@@ -356,7 +379,7 @@ private fun WeiboAccount.dailyTaskCompletion(waterPostTarget: Int): DailyTaskCom
     return DailyTaskCompletion(
         checkIn = checkInCompleted,
         browse = browseCompleted,
-        comment = commentCompleted,
-        waterPost = waterPostCompleted,
+        comment = if (strongVerified) true else commentCompleted,
+        waterPost = if (strongVerified) true else waterPostCompleted,
     )
 }

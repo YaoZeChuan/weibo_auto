@@ -47,6 +47,7 @@ class AccountRepository(
                 uid = item.uid,
                 name = item.name,
                 avatarUrl = item.avatarUrl ?: old?.avatarUrl,
+                strongVerified = old?.strongVerified ?: false,
                 superLikeLit = old?.superLikeLit ?: false,
                 superLikeExp = old?.superLikeExp ?: -1,
                 checkInDays = old?.checkInDays ?: -1,
@@ -120,6 +121,10 @@ class AccountRepository(
 
     suspend fun setAllSelected(selected: Boolean) {
         accountDao.setAllSelected(selected)
+    }
+
+    suspend fun setStrongVerified(id: Long, strongVerified: Boolean) {
+        accountDao.setStrongVerified(id, strongVerified)
     }
 
     suspend fun updateCheckInDays(id: Long, days: Int) {
