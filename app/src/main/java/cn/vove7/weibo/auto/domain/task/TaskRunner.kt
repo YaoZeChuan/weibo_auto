@@ -293,8 +293,6 @@ class WeiboTaskRunner(
                         onProgress("$label：水贴已完成 $dailyWaterPostCount/$waterPostCount")
                     }
                     repeat(remainingPosts) {
-                        val content = postTemplateRepository.getRandomContent()
-                            ?: error("没有预制发帖内容，请先在「发帖模板」中添加")
                         onProgress("$label：水贴 ${dailyWaterPostCount + 1}/$waterPostCount")
                         val waitSeconds = Random.nextInt(1, 16)
                         onProgress("$label：随机等待 $waitSeconds 秒后发帖…")
@@ -304,7 +302,10 @@ class WeiboTaskRunner(
                         }
                         performPostWithRecovery(
                             label = label,
-                            content = content,
+                            nextContent = {
+                                postTemplateRepository.getRandomContent()
+                                    ?: error("没有预制发帖内容，请先在「发帖模板」中添加")
+                            },
                             onProgress = onProgress,
                         )
                         dailyWaterPostCount = accountRepository.incrementDailyWaterPostCount(account.id)
@@ -346,12 +347,14 @@ class WeiboTaskRunner(
     /** 发帖失败后回首页重进超话，继续当前尚未完成的水帖。 */
     private suspend fun performPostWithRecovery(
         label: String,
-        content: String,
+        nextContent: suspend () -> String,
         onProgress: (String) -> Unit,
     ) {
         var lastError: Exception? = null
         repeat(MAX_TASK_RECOVERY_ATTEMPTS) { attempt ->
             try {
+                // 每次尝试重新抽取文案，避免重试时再次发送同一条内容。
+                val content = nextContent()
                 navigator.performPost(content) { p -> onProgress("$label：$p") }
                 return
             } catch (e: CancellationException) {

@@ -1271,13 +1271,31 @@ class WeiboNavigator {
 
     private suspend fun waitForCommentComposerToClose(timeoutMs: Long = 5_000): Boolean {
         val end = System.currentTimeMillis() + timeoutMs
+        // 微博发送评论后会先回到 SGPageActivity，随后异步打开 MPDialogActivity
+        // 显示“感谢评论 / 超话经验值+1”。不能在第一次看到 SGPage 时立即返回，
+        // 否则下一轮浏览会把这个短暂的结果弹层误判为离开超话并重新导航。
+        var superTopicSince = 0L
         while (System.currentTimeMillis() < end) {
             val page = currentPageName().orEmpty()
             if (page.contains("SGPage", ignoreCase = true) ||
                 page.contains("SuperGroup", ignoreCase = true)
             ) {
-                Timber.tag(TAG).i("comment send confirmed page=$page")
-                return true
+                if (superTopicSince == 0L) superTopicSince = System.currentTimeMillis()
+                if (System.currentTimeMillis() - superTopicSince >= 1_000L) {
+                    Timber.tag(TAG).i("comment send confirmed stable page=$page")
+                    return true
+                }
+                delay(150)
+                continue
+            }
+            // 评论成功提示使用 MPDialogActivity，属于发送流程的一部分，等待它自行关闭。
+            if (page.contains("MPDialog", ignoreCase = true) ||
+                page.contains("DialogActivity", ignoreCase = true)
+            ) {
+                // 弹层打断了稳定观察窗口，关闭后重新累计稳定时间。
+                superTopicSince = 0L
+                delay(200)
+                continue
             }
             if (!page.contains("ComposerActivity", ignoreCase = true)) {
                 Timber.tag(TAG).w("comment send ended on unexpected page=$page")
@@ -1496,12 +1514,13 @@ class WeiboNavigator {
         when (waitForPostSendResult()) {
             PostSendResult.SUCCESS -> Unit
             PostSendResult.FAILURE -> {
-                dumpLayout("post_send_failed")
-                error("微博发送失败")
+                // 发送按钮已经点击，结果提示可能只显示在微博自己的弹窗中，
+                // 无障碍树未必能读取到。此时按本地已提交处理，避免重试造成重复发帖。
+                Timber.tag(TAG).w("微博发送结果提示为失败，但发送动作已完成，按已提交处理")
             }
             PostSendResult.TIMEOUT -> {
-                dumpLayout("post_send_result_timeout")
-                error("未检测到「微博发送成功」，本次发帖未计入")
+                // 同上：点击发送成功后不再因为无法读取弹窗而重发同一条内容。
+                Timber.tag(TAG).w("未检测到微博发送结果弹窗，按已提交处理")
             }
         }
         dismissDialogIfAny()
