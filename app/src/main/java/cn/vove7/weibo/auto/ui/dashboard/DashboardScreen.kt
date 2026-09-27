@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cn.vove7.weibo.auto.data.entity.WeiboAccount
 import cn.vove7.weibo.auto.ui.components.AccessibilityStatusBar
 import cn.vove7.weibo.auto.BuildConfig
 
@@ -67,6 +68,24 @@ fun DashboardScreen(
     val commentTemplates by viewModel.commentTemplates.collectAsStateWithLifecycle()
     val automationSettings by viewModel.automationSettings.collectAsStateWithLifecycle()
     val taskExecutionLogs by viewModel.taskExecutionLogs.collectAsStateWithLifecycle()
+    val sortedAccounts = remember(accounts, automationSettings.waterPostCount) {
+        accounts.sortedWith(
+            compareBy<WeiboAccount> {
+                val incomplete = dashboardIncompleteTaskCount(
+                    account = it,
+                    waterPostTarget = automationSettings.waterPostCount,
+                )
+                if (incomplete > 0) 0 else if (!it.isCheckedToday()) 1 else 2
+            }
+                .thenByDescending {
+                    dashboardIncompleteTaskCount(
+                        account = it,
+                        waterPostTarget = automationSettings.waterPostCount,
+                    )
+                }
+                .thenBy { it.id },
+        )
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { message ->
@@ -244,7 +263,7 @@ fun DashboardScreen(
                         contentPadding = PaddingValues(bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        items(accounts, key = { it.id }) { account ->
+                        items(sortedAccounts, key = { it.id }) { account ->
                             AccountCard(
                                 account = account,
                                 waterPostTarget = automationSettings.waterPostCount,
@@ -291,6 +310,36 @@ fun DashboardScreen(
             }
         }
     }
+}
+
+private fun dashboardIncompleteTaskCount(
+    account: WeiboAccount,
+    waterPostTarget: Int,
+): Int {
+    val detected = account.isDailyTaskDetectedToday()
+    if (!detected) {
+        return if (account.strongVerified) 2 else 4
+    }
+    val checkInIncomplete = account.dailyCheckInStatus != "COMPLETED"
+    val browseIncomplete = account.dailyBrowseCompletedCount < 0 ||
+        account.dailyBrowseRequiredCount < 0 ||
+        account.dailyBrowseCompletedCount < account.dailyBrowseRequiredCount
+    val commentIncomplete = !account.strongVerified &&
+        (account.dailyCommentCompletedCount < 0 ||
+            account.dailyCommentRequiredCount < 0 ||
+            account.dailyCommentCompletedCount < account.dailyCommentRequiredCount)
+    val waterPostCount = if (account.isDailyWaterPostRecordedToday()) {
+        account.dailyWaterPostCompletedCount
+    } else {
+        0
+    }
+    val waterPostIncomplete = !account.strongVerified && waterPostCount < waterPostTarget
+    return listOf(
+        checkInIncomplete,
+        browseIncomplete,
+        commentIncomplete,
+        waterPostIncomplete,
+    ).count { it }
 }
 
 @Composable

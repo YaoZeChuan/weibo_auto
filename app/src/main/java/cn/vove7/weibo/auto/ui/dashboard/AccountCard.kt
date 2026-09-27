@@ -50,6 +50,8 @@ private val FailBg = Color(0xFFFFEBEE)
 private val FailFg = Color(0xFFC62828)
 private val MuteBg = Color(0xFFF0F0F2)
 private val MuteFg = Color(0xFF6B6B70)
+private val NotCheckedBg = Color(0xFFFFE0B2)
+private val NotCheckedFg = Color(0xFFE65100)
 private val CheckBg = Color(0xFFE8F0FE)
 private val CheckFg = Color(0xFF1565C0)
 private val TaskCompleteGreen = Color(0xFF34A853)
@@ -67,6 +69,7 @@ fun AccountCard(
 ) {
     var showDailyTaskTip by remember(account.id) { mutableStateOf(false) }
     val dailyTaskCompletion = account.dailyTaskCompletion(waterPostTarget)
+    val superLikeCheckedToday = account.isCheckedToday()
     Card(
         onClick = { showDailyTaskTip = true },
         modifier = modifier.fillMaxWidth(),
@@ -142,11 +145,13 @@ fun AccountCard(
                             else -> "超L${account.superLikeExp}分"
                         },
                         bg = when {
+                            !superLikeCheckedToday -> NotCheckedBg
                             account.superLikeExp < 0 -> MuteBg
                             account.superLikeLit -> LitBg
                             else -> FailBg
                         },
                         fg = when {
+                            !superLikeCheckedToday -> NotCheckedFg
                             account.superLikeExp < 0 -> MuteFg
                             account.superLikeLit -> LitFg
                             else -> FailFg

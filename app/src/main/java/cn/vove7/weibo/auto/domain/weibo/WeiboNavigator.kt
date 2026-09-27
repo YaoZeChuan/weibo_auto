@@ -136,11 +136,21 @@ class WeiboNavigator {
         onProgress("进入「我」…")
         Timber.tag(TAG).i("goToAccountManage: step=我")
         clickMeTab()
-        delay(1_200)
+        // 切换底部 Tab 后页面可能仍在加载，不能只依赖固定延时就查找右上角设置。
+        waitUntilMePageReady(timeoutMs = 8_000)
 
         onProgress("打开设置…")
         Timber.tag(TAG).i("goToAccountManage: step=设置")
-        clickSettings()
+        try {
+            clickSettings()
+        } catch (e: Exception) {
+            // 微博偶发保留旧页面/弹层，第一次找不到设置时重新进入「我」页再试一次。
+            Timber.tag(TAG).w(e, "goToAccountManage: settings not found, retry from 我")
+            onProgress("设置入口未出现，重新加载「我」页…")
+            clickMeTab()
+            waitUntilMePageReady(timeoutMs = 8_000)
+            clickSettings()
+        }
         delay(1_000)
 
         onProgress("进入账号管理…")
@@ -431,7 +441,8 @@ class WeiboNavigator {
 
     /** 是否已有签到按钮或连签文案（判断超话头图区是否加载） */
     private fun hasCheckInOrSignUi(): Boolean {
-        if (readCheckInDays() != null) return true
+        // 这里只判断头图区是否已经渲染，不读取具体天数。
+        // readCheckInDays() 会遍历多个无障碍窗口，若在 waitUntil 中反复调用会造成明显延迟。
         val labels = listOf("签到", "立即签到", "今日签到", "连签")
         if (dfsFindViewNodes { n ->
                 val t = n.text?.toString().orEmpty()
@@ -441,9 +452,8 @@ class WeiboNavigator {
         ) {
             return true
         }
-        for (label in labels) {
-            if (findBySystemText(label).isNotEmpty()) return true
-        }
+        // 不在等待循环中调用 findBySystemText：该接口会遍历多个窗口，
+        // 每 400ms 重复调用会把进入超话后的等待放大数秒。
         return false
     }
 
@@ -768,42 +778,52 @@ class WeiboNavigator {
             Regex("""连续签到\s*(\d+)\s*天"""),
             Regex("""已连签\s*(\d+)"""),
         )
-        val fromDfs = dfsFindViewNodes { true }.mapNotNull { n ->
+        val nodes = dfsFindViewNodes { true }
+        val fromDfs = nodes.mapNotNull { n ->
             n.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
                 ?: n.desc()?.trim()?.takeIf { it.isNotEmpty() }
         }
-        val texts = (collectAllNodeTexts() + fromDfs).distinct()
         // 优先上半屏节点（签到区在头图右侧）
-        val upper = dfsFindViewNodes { n ->
+        val upper = nodes.filter { n ->
             val t = n.text?.toString().orEmpty()
             (t.contains("连签") || t.contains("签到")) &&
                 n.bounds.centerY() < (screenHeight() * 0.45f).toInt()
         }.mapNotNull { it.text?.toString()?.trim() }
-        for (t in (upper + texts).distinct()) {
-            for (p in patterns) {
-                val m = p.find(t)
-                if (m != null) {
-                    val d = m.groupValues[1].toIntOrNull()
+        fun parseDays(texts: List<String>): Int? {
+            for (t in texts.distinct()) {
+                for (p in patterns) {
+                    val d = p.find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()
                     if (d != null && d in 1..9999) {
                         Timber.tag(TAG).i("readCheckInDays: hit '$t' -> $d")
                         return d
                     }
                 }
             }
-        }
-        // 拼接全文再匹配（连签 / 274 / 天 拆开时）
-        val joined = texts.joinToString("")
-        for (p in patterns) {
-            val m = p.find(joined)
-            if (m != null) {
-                val d = m.groupValues[1].toIntOrNull()
+            val joined = texts.joinToString("")
+            for (p in patterns) {
+                val d = p.find(joined)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 if (d != null && d in 1..9999) {
                     Timber.tag(TAG).i("readCheckInDays: joined hit exp=$d")
                     return d
                 }
             }
+            return null
         }
-        Timber.tag(TAG).d("readCheckInDays: miss sample=${texts.filter { it.contains("签") }.take(10)}")
+
+        // 优先只用当前树；多数版本的连签文案在这里即可读到。
+        parseDays((upper + fromDfs).distinct())?.let { return it }
+
+        // 当前树没有文案时才走系统查找兜底，避免每次轮询都扫描多个窗口。
+        val fromSystem = listOf("连签", "连续签到", "签到").flatMap { label ->
+            findBySystemText(label).flatMap { node ->
+                listOfNotNull(
+                    node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() },
+                    runCatching { node.desc() }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() },
+                )
+            }
+        }
+        parseDays(fromSystem + fromDfs)?.let { return it }
+        Timber.tag(TAG).d("readCheckInDays: miss sample=${(fromSystem + fromDfs).filter { it.contains("签") }.take(10)}")
         return null
     }
 
