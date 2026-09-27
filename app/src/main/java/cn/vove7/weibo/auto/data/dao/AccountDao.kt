@@ -35,6 +35,9 @@ interface AccountDao {
     @Query("UPDATE weibo_accounts SET selected = :selected")
     suspend fun setAllSelected(selected: Boolean)
 
+    @Query("UPDATE weibo_accounts SET strongVerified = :strongVerified WHERE id = :id")
+    suspend fun setStrongVerified(id: Long, strongVerified: Boolean)
+
     @Query(
         """
         UPDATE weibo_accounts

@@ -986,13 +986,34 @@ class WeiboNavigator {
         while (System.currentTimeMillis() < end) {
             val w = screenWidth()
             val h = screenHeight()
+
+            // 新版微博将入口改成了 desc="赚经验" 的普通 View，点击事件在父
+            // FrameLayout 上；旧版则是右上角没有文案的可点击 ImageView。
+            val semanticCandidate = collectNodesByLabels(listOf("赚经验", "赚经验值"))
+                .filter { node ->
+                    node.bounds.centerX() > w * 0.65f &&
+                        node.bounds.centerY() in (h * 0.15f).toInt()..(h * 0.35f).toInt()
+                }
+                .minByOrNull { it.bounds.width() * it.bounds.height() }
+            if (semanticCandidate != null) {
+                Timber.tag(TAG).i(
+                    "findDailyTaskEntryButton: semantic ${describeNode(semanticCandidate)}"
+                )
+                return semanticCandidate
+            }
+
             val candidate = dfsFindViewNodes { node ->
                 node.className.orEmpty().contains("ImageView", ignoreCase = true) &&
                     node.isClickable() &&
                     node.bounds.centerX() > w * 0.78f &&
                     node.bounds.centerY() in (h * 0.15f).toInt()..(h * 0.35f).toInt()
             }.maxByOrNull { it.bounds.centerY() }
-            if (candidate != null) return candidate
+            if (candidate != null) {
+                Timber.tag(TAG).i(
+                    "findDailyTaskEntryButton: legacy image ${describeNode(candidate)}"
+                )
+                return candidate
+            }
             delay(300)
         }
         return null

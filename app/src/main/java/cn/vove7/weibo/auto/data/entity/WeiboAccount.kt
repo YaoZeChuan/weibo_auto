@@ -13,6 +13,8 @@ data class WeiboAccount(
     val uid: String,
     val name: String,
     val avatarUrl: String? = null,
+    /** 是否为强实名账号；这类账号不执行发帖和评论操作。 */
+    val strongVerified: Boolean = false,
     /** 超 like 是否点亮（近7天经验值 >= 阈值，默认 80） */
     val superLikeLit: Boolean = false,
     /** 超 like 近7天经验值；-1 表示尚未检测 */
