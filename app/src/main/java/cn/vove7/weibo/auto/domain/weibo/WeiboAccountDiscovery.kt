@@ -11,6 +11,7 @@ import cn.vove7.auto.core.api.withId
 import cn.vove7.auto.core.api.withText
 import cn.vove7.auto.core.utils.ViewNodeNotFoundException
 import cn.vove7.auto.core.viewfinder.ScreenTextFinder
+import cn.vove7.auto.core.viewfinder.ViewFinder
 import cn.vove7.auto.core.viewnode.ViewNode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -52,7 +53,7 @@ class WeiboAccountDiscovery {
             delay(1_500)
 
             onProgress("解析账号列表…")
-            val accounts = parseAccountManagePage()
+            val accounts = parseAccountManagePage(onProgress)
             if (accounts.isEmpty()) {
                 dumpLayoutForDebug(tag = "empty_accounts")
                 error("未解析到任何账号，请确认账号管理页已打开且有登录账号")
@@ -306,15 +307,64 @@ class WeiboAccountDiscovery {
         }
     }
 
-    private suspend fun parseAccountManagePage(): List<DiscoveredAccount> {
-        delay(600)
+    /**
+     * 解析「账号管理」列表。
+     *
+     * 账号列表是 RecyclerView：无障碍树里只有**屏幕上已渲染**的行（ViewFinder 会跳过
+     * 不可见节点），一屏通常只放得下 10 行左右。所以必须边下滑边收集，
+     * 否则登录了 13 个号也只会解析到第一屏的 10 个。
+     */
+    private suspend fun parseAccountManagePage(
+        onProgress: (String) -> Unit = {},
+    ): List<DiscoveredAccount> {
+        val names = linkedSetOf<String>()
+        var previousPage: Set<String> = emptySet()
+        var unchangedRounds = 0
+        for (round in 1..MAX_LIST_SWIPES + 1) {
+            delay(if (round == 1) 600 else 900)
+            val page = collectVisibleAccountNames()
+            if (page.isEmpty() && names.isEmpty() && round == 1) {
+                // 保持旧行为：严格过滤一屏都没结果时，放宽条件再扫一次
+                collectLooseAccountNames(names)
+            }
+            names += page
+            onProgress("解析账号列表…已发现 ${names.size} 个（第 $round 屏）")
+            Timber.i("account page round=$round visible=${page.size} total=${names.size}")
+
+            unchangedRounds = if (page.isNotEmpty() && page == previousPage) {
+                unchangedRounds + 1
+            } else {
+                0
+            }
+            previousPage = page
+            if (unchangedRounds >= 2) {
+                Timber.i("账号列表连续 $unchangedRounds 屏无变化，已到底")
+                break
+            }
+            if (round > MAX_LIST_SWIPES) break
+            if (!scrollAccountListForward()) {
+                Timber.i("账号列表无法继续滚动，停在第 $round 屏")
+                break
+            }
+        }
+
+        Timber.i("parsed account names after filter: $names")
+        return names.map { name ->
+            DiscoveredAccount(
+                uid = stableUid(name),
+                name = name,
+            )
+        }
+    }
+
+    /** 收集当前屏幕上（可见区域）的账号昵称。 */
+    private suspend fun collectVisibleAccountNames(): Set<String> {
         val textNodes = ScreenTextFinder().find()
         Timber.d("account page texts: ${textNodes.map { "${it.text}@${it.bounds}" }}")
 
         // 排除状态栏 / 标题栏 / 底部导航；账号列表一般在中间区域
-        val screenH = screenHeight()
-        val topExclude = (screenH * 0.12f).toInt().coerceAtLeast(120) // 状态栏+标题
-        val bottomExclude = (screenH * 0.88f).toInt()
+        val topExclude = accountBandTop() // 状态栏+标题
+        val bottomExclude = accountBandBottom()
 
         val names = linkedSetOf<String>()
         for (node in textNodes) {
@@ -343,20 +393,91 @@ class WeiboAccountDiscovery {
         }
 
         if (names.isEmpty()) {
-            ViewNode.getRoot().let { root ->
-                collectAccountLikeTexts(root, topExclude, bottomExclude).forEach { t ->
-                    if (!isIgnoredUiText(t) && looksLikeAccountName(t)) names += t
+            collectLooseAccountNames(names)
+        }
+        return names
+    }
+
+    /** 兜底：整屏文案里筛出疑似昵称（严格过滤无结果时使用，保持旧行为）。 */
+    private fun collectLooseAccountNames(out: MutableSet<String>) {
+        collectAccountLikeTexts(
+            node = ViewNode.getRoot(),
+            topExclude = accountBandTop(),
+            bottomExclude = accountBandBottom(),
+        ).forEach { t ->
+            if (!isIgnoredUiText(t) && looksLikeAccountName(t)) out += t
+        }
+    }
+
+    /** 账号列表可见区域上边界（状态栏 + 标题栏）。 */
+    private fun accountBandTop(): Int = (screenHeight() * 0.12f).toInt().coerceAtLeast(120)
+
+    /** 账号列表可见区域下边界（底部导航）。 */
+    private fun accountBandBottom(): Int = (screenHeight() * 0.88f).toInt()
+
+    /**
+     * 账号列表下滑一屏。
+     *
+     * 优先对列表容器执行无障碍 ACTION_SCROLL_FORWARD（RecyclerView 支持），
+     * 失败则用坐标滑动兜底。
+     *
+     * @return true 表示滚动已触发（可继续解析下一屏）
+     */
+    private suspend fun scrollAccountListForward(): Boolean {
+        val list = findScrollableList()
+        if (list != null) {
+            val scrolled = runCatching { list.scrollForward() }.getOrDefault(false)
+            Timber.i("scrollAccountListForward by node -> $scrolled, node=$list")
+            if (scrolled) {
+                delay(700)
+                return true
+            }
+        }
+        val midX = screenWidth() / 2
+        val h = screenHeight()
+        val yStart = (h * 0.72f).toInt()
+        val yEnd = (h * 0.40f).toInt()
+        val ok = runCatching {
+            cn.vove7.auto.core.api.swipe(midX, yStart, midX, yEnd, 600)
+        }.getOrDefault(false)
+        Timber.i("scrollAccountListForward by swipe ($midX,$yStart)->($midX,$yEnd) -> $ok")
+        if (ok) delay(700)
+        return ok
+    }
+
+    /** 找到账号列表所在的最内层可滚动容器（RecyclerView / ListView / ScrollView）。 */
+    private fun findScrollableList(): ViewNode? {
+        val screenW = screenWidth()
+        val screenH = screenHeight()
+        val minWidth = (screenW * 0.6f).toInt()
+        val minHeight = (screenH * 0.25f).toInt()
+        val candidates = mutableListOf<ViewNode>()
+
+        fun walk(node: ViewNode?, depth: Int) {
+            // 微博页面树较深，沿用 ViewFinder 的深度上限
+            if (node == null || depth > ViewFinder.MAX_TRAVERSE_DEPTH) return
+            try {
+                val b = node.bounds
+                val pkg = node.packageName
+                if (node.node.isScrollable &&
+                    (pkg == null || pkg == WeiboConsts.PACKAGE) &&
+                    b.width() >= minWidth &&
+                    b.height() >= minHeight
+                ) {
+                    candidates += node
                 }
+            } catch (e: Throwable) {
+                Timber.w(e, "findScrollableList walk")
+                return
+            }
+            for (i in 0 until node.childCount) {
+                walk(node.childAt(i), depth + 1)
             }
         }
 
-        Timber.i("parsed account names after filter: $names")
-        return names.map { name ->
-            DiscoveredAccount(
-                uid = stableUid(name),
-                name = name,
-            )
-        }
+        walk(ViewNode.getRoot(), 0)
+        // 最矮（最内层）的可滚动容器就是账号列表
+        return candidates.minByOrNull { it.bounds.height() }
     }
 
     private fun collectAccountLikeTexts(
@@ -395,7 +516,9 @@ class WeiboAccountDiscovery {
 
         val chrome = setOf(
             "账号管理", "帐号管理", "添加账号", "添加帐号", "设置", "完成", "编辑",
-            "管理", "当前使用", "当前账号", "切换账号", "退出登录", "登录", "注册",
+            "管理", "当前使用", "当前账号", "切换账号", "切换帐号", "退出登录", "登录", "注册",
+            "退出当前账号", "免密登录", "一键登录", "登录设备管理", "管理登录设备", "已登录设备",
+            "账号与安全", "帐号与安全",
             "我", "我的", "首页", "发现", "消息", "视频", "微博", "搜索",
             "确定", "取消", "返回", "更多", "帮助", "关于", "隐私",
             "当前登录", "使用中", "正在使用",
@@ -427,6 +550,9 @@ class WeiboAccountDiscovery {
     }
 
     companion object {
+        /** 账号列表最多下滑次数（1 屏首屏 + N 次下滑；13 个账号约 3~4 次足够） */
+        private const val MAX_LIST_SWIPES = 12
+
         private val TIME_TEXT = Regex(
             """^(?:上午|下午|晚上|凌晨|中午)?\s*\d{1,2}\s*[:：]\s*\d{2}(?:\s*[:：]\s*\d{2})?$"""
         )
